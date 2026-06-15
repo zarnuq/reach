@@ -284,14 +284,13 @@ fn execute(action: Action) void {
     }
 }
 
-/// The output whose view the tag actions affect — pointer's output first,
-/// else the focused window's output, else the first output.
+/// The output the tag/layout actions affect: the selected output (`selmon`). This
+/// is the same value the bar highlights, so a keybinding always acts on the
+/// monitor that visibly has focus. Falls back to the first output before any
+/// selection has been made.
 fn focusedOutput() ?*Output {
     const ctx = Context.get();
-    if (ctx.pointer_output) |o| return o;
-    if (ctx.focused) |f| {
-        if (f.output) |o| return o;
-    }
+    if (ctx.current_output) |o| return o;
     return if (ctx.outputs.items.len > 0) ctx.outputs.items[0] else null;
 }
 
@@ -360,44 +359,56 @@ fn adjustNmaster(delta: i32) void {
     out.nmaster = @max(0, out.nmaster + delta);
 }
 
-fn focusMonitor(dir: i32) void {
+/// Index of `out` in the output list, or null if not present.
+fn outputIndex(out: *Output) ?usize {
     const ctx = Context.get();
-    if (ctx.outputs.items.len < 2) return;
-    const cur = focusedOutput() orelse return;
-
     for (ctx.outputs.items, 0..) |o, i| {
-        if (o == cur) {
-            const next_idx = if (dir > 0)
-                (i + 1) % ctx.outputs.items.len
-            else
-                (i + ctx.outputs.items.len - 1) % ctx.outputs.items.len;
-            const next_out = ctx.outputs.items[next_idx];
-            for (ctx.windows.items) |w| {
-                if (w.output == next_out and w.visible()) {
-                    ctx.focused = w;
-                    return;
-                }
-            }
-            return;
-        }
+        if (o == out) return i;
     }
+    return null;
 }
 
+/// The output `dir` steps away from `out` (wrapping). Null if there's only one.
+fn adjacentOutput(out: *Output, dir: i32) ?*Output {
+    const ctx = Context.get();
+    const n = ctx.outputs.items.len;
+    if (n < 2) return null;
+    const i = outputIndex(out) orelse return null;
+    const next = if (dir > 0) (i + 1) % n else (i + n - 1) % n;
+    return ctx.outputs.items[next];
+}
+
+/// Move the selection to the adjacent monitor and pull keyboard focus there.
+/// Works even when the target monitor is empty (selection still moves, focus
+/// clears) so you can switch to a bare monitor and spawn onto it.
+fn focusMonitor(dir: i32) void {
+    const ctx = Context.get();
+    const cur = focusedOutput() orelse return;
+    const next_out = adjacentOutput(cur, dir) orelse return;
+
+    ctx.current_output = next_out;
+    ctx.pointer_output = next_out;
+    ctx.focused = topVisibleOn(next_out);
+}
+
+/// Send the focused window to the adjacent monitor (onto that monitor's viewed
+/// tags), dwl-style. The selection stays put; focus falls to whatever's left.
 fn tagMonitor(dir: i32) void {
     const ctx = Context.get();
-    if (ctx.outputs.items.len < 2) return;
     const cur = focusedOutput() orelse return;
+    const next_out = adjacentOutput(cur, dir) orelse return;
     const w = ctx.focused orelse return;
 
-    for (ctx.outputs.items, 0..) |o, i| {
-        if (o == cur) {
-            const next_idx = if (dir > 0)
-                (i + 1) % ctx.outputs.items.len
-            else
-                (i + ctx.outputs.items.len - 1) % ctx.outputs.items.len;
-            w.output = ctx.outputs.items[next_idx];
-            w.tags = w.output.?.tagset;
-            return;
-        }
+    w.output = next_out;
+    w.tags = next_out.tagset;
+    refocus(cur);
+}
+
+/// The most-recently-focused visible window on `out`, or null if it's empty.
+fn topVisibleOn(out: *Output) ?*Window {
+    const ctx = Context.get();
+    for (ctx.windows.items) |w| {
+        if (w.output == out and w.visible()) return w;
     }
+    return null;
 }

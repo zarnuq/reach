@@ -51,7 +51,14 @@ pub const Context = struct {
     // a single primary seat; per-seat focus is a later refinement.
     focused: ?*Window = null,
     primary_seat: ?*Seat = null,
-    pointer_output: ?*Output = null, // output pointer is over
+    pointer_output: ?*Output = null, // output the pointer is over (spawn target)
+
+    // The selected output — dwl's `selmon`. This is the single source of truth
+    // for "which monitor is active": tag/layout keybindings act on it and the bar
+    // draws its highlight there. Updated on click-to-focus, new windows, and
+    // `focusmon`. Kept distinct from `pointer_output` so keyboard-driven focus and
+    // mouse position can differ without the two disagreeing about the target.
+    current_output: ?*Output = null,
 
     running: bool = true,
 };

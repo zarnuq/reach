@@ -202,6 +202,9 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
                 return;
             };
             ctx.focused = w;
+            // The new window is focused, so its monitor becomes the selected one
+            // (keeps the bar highlight and tag keys on the window you just opened).
+            if (out) |o| ctx.current_output = o;
             log.info("window created (total {d})", .{ctx.windows.items.len});
         },
 
@@ -216,6 +219,8 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
                 ctx.gpa.destroy(o);
                 return;
             };
+            // First monitor to appear is selected by default.
+            if (ctx.current_output == null) ctx.current_output = o;
             log.info("output created (total {d})", .{ctx.outputs.items.len});
         },
 

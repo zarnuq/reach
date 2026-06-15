@@ -75,6 +75,11 @@ pub const Output = struct {
                         break;
                     }
                 }
+                // Don't leave the selection (or pointer target) dangling at a
+                // freed output; fall back to whatever monitor remains.
+                const fallback: ?*Output = if (ctx.outputs.items.len > 0) ctx.outputs.items[0] else null;
+                if (ctx.current_output == self) ctx.current_output = fallback;
+                if (ctx.pointer_output == self) ctx.pointer_output = fallback;
                 if (self.bar) |b| b.destroy();
                 self.rwm.destroy();
                 ctx.gpa.destroy(self);

@@ -47,6 +47,8 @@ pub const Seat = struct {
                     if (w.rwm == ev.window) {
                         ctx.focused = w;
                         ctx.pointer_output = w.output;
+                        // Clicking a window also selects its monitor (selmon).
+                        ctx.current_output = w.output;
                         break;
                     }
                 }

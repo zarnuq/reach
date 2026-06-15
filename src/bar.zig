@@ -316,10 +316,15 @@ fn fillRect(buffer: *Buffer, x: i32, y: i32, w: i32, h: i32, c: *const pixman.Co
     _ = pixman.Image.fillRectangles(.src, buffer.image, c, 1, &rects);
 }
 
-/// The output that currently holds keyboard focus (whose bar gets the highlight).
+/// The selected output (whose bar gets the highlight). This is the same value the
+/// tag/layout keybindings act on (see binding.focusedOutput), so the highlighted
+/// monitor is always the one the keyboard drives. Falls back to the focused
+/// window's output, then the sole output, before any selection has happened.
 fn currentOutput() ?*Output {
     const ctx = Context.get();
+    if (ctx.current_output) |o| return o;
     if (ctx.focused) |f| return f.output;
+    if (ctx.outputs.items.len == 1) return ctx.outputs.items[0];
     return null;
 }
 
