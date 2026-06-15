@@ -59,8 +59,8 @@ pub const Action = union(enum) {
     toggleview: u32,
     tag: u32,
     toggletag: u32,
-    // Spawn
-    spawn: []const []const u8,
+    // Spawn - single shell command string
+    spawn: [:0]const u8,
     // Window management
     quit,
     killclient,
@@ -116,52 +116,52 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, ')', MOD_SHIFT, .{ .tag = ~@as(u32, 0) });
 
     // Spawn - all with MOD to avoid conflicts
-    add(xkb, seat, 'p', MOD, .{ .spawn = &.{"swaylock"} });
-    add(xkb, seat, XKB_KEY_Tab, MOD, .{ .spawn = &.{"kitty"} });
-    add(xkb, seat, 'd', MOD, .{ .spawn = &.{ "emacsclient", "-c" } });
-    add(xkb, seat, XKB_KEY_space, MOD, .{ .spawn = &.{ "rofi", "-show", "drun", "-show-icons" } });
-    add(xkb, seat, XKB_KEY_BackSpace, MOD, .{ .spawn = &.{ "kitty", "--class", "float" } });
-    add(xkb, seat, 'v', MOD, .{ .spawn = &.{"/bin/sh -c 'kitty --class float -e $HOME/.local/bin/clipfzf'"} });
-    add(xkb, seat, 'x', MOD, .{ .spawn = &.{"/bin/sh -c 'kitty --class float -e $HOME/.local/bin/killfzf'"} });
-    add(xkb, seat, 'z', MOD, .{ .spawn = &.{"/bin/sh -c 'kitty --class float -e $HOME/.local/bin/svfzf'"} });
-    add(xkb, seat, 'w', MOD, .{ .spawn = &.{ "kitty", "--class", "rmpc", "rmpc" } });
-    add(xkb, seat, 'W', MOD_SHIFT, .{ .spawn = &.{"rmpc rescan"} });
-    add(xkb, seat, 't', MOD, .{ .spawn = &.{"zen"} });
-    add(xkb, seat, 'B', MOD_SHIFT, .{ .spawn = &.{ "kitty", "-e", "yazi", "$HOME/Pictures/bgs" } });
-    add(xkb, seat, 'b', MOD, .{ .spawn = &.{"/bin/sh -c 'awww img \"$(find $HOME/Pictures/bgs -type f \\( -iname '*.jpg' -o -iname '*.png' \\) | shuf -n1)\" --transition-fps 144 --transition-type top --transition-duration 1'"} });
-    add(xkb, seat, 'e', MOD, .{ .spawn = &.{"$HOME/.local/bin/eww.sh open"} });
-    add(xkb, seat, 'E', MOD_SHIFT, .{ .spawn = &.{"$HOME/.local/bin/eww.sh close"} });
-    add(xkb, seat, 'r', MOD, .{ .spawn = &.{"$HOME/.local/bin/runbar.sh"} });
+    add(xkb, seat, 'p', MOD, .{ .spawn = "swaylock" });
+    add(xkb, seat, XKB_KEY_Tab, MOD, .{ .spawn = "kitty" });
+    add(xkb, seat, 'd', MOD, .{ .spawn = "emacsclient -c" });
+    add(xkb, seat, XKB_KEY_space, MOD, .{ .spawn = "rofi -show drun -show-icons" });
+    add(xkb, seat, XKB_KEY_BackSpace, MOD, .{ .spawn = "kitty --class float" });
+    add(xkb, seat, 'v', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/clipfzf" });
+    add(xkb, seat, 'x', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/killfzf" });
+    add(xkb, seat, 'z', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/svfzf" });
+    add(xkb, seat, 'w', MOD, .{ .spawn = "kitty --class rmpc rmpc" });
+    add(xkb, seat, 'W', MOD_SHIFT, .{ .spawn = "rmpc rescan" });
+    add(xkb, seat, 't', MOD, .{ .spawn = "zen" });
+    add(xkb, seat, 'B', MOD_SHIFT, .{ .spawn = "kitty -e yazi $HOME/Pictures/bgs" });
+    add(xkb, seat, 'b', MOD, .{ .spawn = "awww img \"$(find $HOME/Pictures/bgs -type f \\( -iname '*.jpg' -o -iname '*.png' \\) | shuf -n1)\" --transition-fps 144 --transition-type top --transition-duration 1" });
+    add(xkb, seat, 'e', MOD, .{ .spawn = "$HOME/.local/bin/eww.sh open" });
+    add(xkb, seat, 'E', MOD_SHIFT, .{ .spawn = "$HOME/.local/bin/eww.sh close" });
+    add(xkb, seat, 'r', MOD, .{ .spawn = "$HOME/.local/bin/runbar.sh" });
 
     // Apps (using Ctrl variants to avoid conflicts)
-    add(xkb, seat, 'd', MOD_CTRL, .{ .spawn = &.{"legcord"} });
-    add(xkb, seat, 'b', MOD_CTRL, .{ .spawn = &.{"brave"} });
-    add(xkb, seat, 'a', MOD_CTRL, .{ .spawn = &.{"pavucontrol"} });
-    add(xkb, seat, 's', MOD_CTRL, .{ .spawn = &.{"/bin/sh -c 'exec steam </dev/null >/dev/null 2>&1'"} });
+    add(xkb, seat, 'd', MOD_CTRL, .{ .spawn = "legcord" });
+    add(xkb, seat, 'b', MOD_CTRL, .{ .spawn = "brave" });
+    add(xkb, seat, 'a', MOD_CTRL, .{ .spawn = "pavucontrol" });
+    add(xkb, seat, 's', MOD_CTRL, .{ .spawn = "exec steam </dev/null >/dev/null 2>&1" });
 
     // Screenshots
-    add(xkb, seat, 's', MOD, .{ .spawn = &.{"/bin/sh -c '$HOME/.local/bin/screenshot.sh ss && notify-send Screenshot \"Quick capture saved!\"'"} });
-    add(xkb, seat, 'S', MOD_SHIFT, .{ .spawn = &.{"/bin/sh -c '$HOME/.local/bin/screenshot.sh section && notify-send Screenshot \"Section saved!\"'"} });
+    add(xkb, seat, 's', MOD, .{ .spawn = "$HOME/.local/bin/screenshot.sh ss && notify-send Screenshot 'Quick capture saved!'" });
+    add(xkb, seat, 'S', MOD_SHIFT, .{ .spawn = "$HOME/.local/bin/screenshot.sh section && notify-send Screenshot 'Section saved!'" });
 
     // Audio (using q prefix)
-    add(xkb, seat, 'q', MOD, .{ .spawn = &.{"easyeffects -l EQ"} });
-    add(xkb, seat, 'Q', MOD_SHIFT, .{ .spawn = &.{"easyeffects -l None"} });
+    add(xkb, seat, 'q', MOD, .{ .spawn = "easyeffects -l EQ" });
+    add(xkb, seat, 'Q', MOD_SHIFT, .{ .spawn = "easyeffects -l None" });
 
     // Media controls
-    add(xkb, seat, XKB_KEY_XF86AudioPlay, .{}, .{ .spawn = &.{ "playerctl", "-p", "mpd", "play-pause" } });
-    add(xkb, seat, XKB_KEY_XF86AudioPrev, .{}, .{ .spawn = &.{ "playerctl", "-p", "mpd", "previous" } });
-    add(xkb, seat, XKB_KEY_XF86AudioNext, .{}, .{ .spawn = &.{ "playerctl", "-p", "mpd", "next" } });
-    add(xkb, seat, XKB_KEY_Up, MOD_ALT, .{ .spawn = &.{"/bin/sh -c 'pactl set-sink-volume @DEFAULT_SINK@ +5% && kill -35 $(pidof confluence)'"} });
-    add(xkb, seat, XKB_KEY_Down, MOD_ALT, .{ .spawn = &.{"/bin/sh -c 'pactl set-sink-volume @DEFAULT_SINK@ -5% && kill -35 $(pidof confluence)'"} });
-    add(xkb, seat, XKB_KEY_Left, MOD_ALT, .{ .spawn = &.{"/bin/sh -c 'pactl set-source-volume @DEFAULT_SOURCE@ -5% && kill -36 $(pidof confluence)'"} });
-    add(xkb, seat, XKB_KEY_Right, MOD_ALT, .{ .spawn = &.{"/bin/sh -c 'pactl set-source-volume @DEFAULT_SOURCE@ +5% && kill -36 $(pidof confluence)'"} });
-    add(xkb, seat, 0xff57, MOD_ALT, .{ .spawn = &.{"/bin/sh -c 'pactl set-source-mute @DEFAULT_SOURCE@ toggle && kill -36 $(pidof confluence)'"} }); // End
-    add(xkb, seat, '[', MOD_ALT, .{ .spawn = &.{"/bin/sh -c '$HOME/.local/bin/flip.sh && touch /tmp/update_audio && kill -35 $(pidof confluence)'"} });
+    add(xkb, seat, XKB_KEY_XF86AudioPlay, .{}, .{ .spawn = "playerctl -p mpd play-pause" });
+    add(xkb, seat, XKB_KEY_XF86AudioPrev, .{}, .{ .spawn = "playerctl -p mpd previous" });
+    add(xkb, seat, XKB_KEY_XF86AudioNext, .{}, .{ .spawn = "playerctl -p mpd next" });
+    add(xkb, seat, XKB_KEY_Up, MOD_ALT, .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ +5% && kill -35 $(pidof confluence)" });
+    add(xkb, seat, XKB_KEY_Down, MOD_ALT, .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ -5% && kill -35 $(pidof confluence)" });
+    add(xkb, seat, XKB_KEY_Left, MOD_ALT, .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ -5% && kill -36 $(pidof confluence)" });
+    add(xkb, seat, XKB_KEY_Right, MOD_ALT, .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ +5% && kill -36 $(pidof confluence)" });
+    add(xkb, seat, 0xff57, MOD_ALT, .{ .spawn = "pactl set-source-mute @DEFAULT_SOURCE@ toggle && kill -36 $(pidof confluence)" }); // End
+    add(xkb, seat, '[', MOD_ALT, .{ .spawn = "$HOME/.local/bin/flip.sh && touch /tmp/update_audio && kill -35 $(pidof confluence)" });
 
     // Brightness
-    add(xkb, seat, XKB_KEY_Left, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = &.{"$HOME/.local/bin/brightness.sh down"} });
-    add(xkb, seat, XKB_KEY_Right, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = &.{"$HOME/.local/bin/brightness.sh up"} });
-    add(xkb, seat, XKB_KEY_Up, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = &.{"$HOME/.local/bin/redshift.sh"} });
+    add(xkb, seat, XKB_KEY_Left, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = "$HOME/.local/bin/brightness.sh down" });
+    add(xkb, seat, XKB_KEY_Right, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = "$HOME/.local/bin/brightness.sh up" });
+    add(xkb, seat, XKB_KEY_Up, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = "$HOME/.local/bin/redshift.sh" });
 
     // Window management
     add(xkb, seat, 'P', MOD_SHIFT, .quit);
@@ -244,16 +244,29 @@ fn execute(action: Action) void {
                 refocus(out);
             }
         },
-        // Spawn
-        .spawn => |argv| {
-            const pid = std.c.fork();
-            if (pid < 0) return;
-            if (pid == 0) {
+        // Spawn - double fork to avoid zombies, reset signal mask
+        .spawn => |cmd| {
+            const pid1 = std.c.fork();
+            if (pid1 < 0) return;
+            if (pid1 == 0) {
+                // Child 1: create new session and fork again
                 _ = std.c.setsid();
-                const cmd: [*:0]const u8 = @ptrCast(argv[0].ptr);
-                _ = std.c.execve("/bin/sh", &[_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd }, std.c.environ);
-                std.c.exit(1);
+                // Reset signal mask
+                _ = std.c.sigprocmask(std.c.SIG.SETMASK, &std.posix.sigemptyset(), null);
+                
+                const pid2 = std.c.fork();
+                if (pid2 < 0) std.c._exit(1);
+                if (pid2 == 0) {
+                    // Child 2: exec the command
+                    const child_args = [_:null]?[*:0]const u8{ "/bin/sh", "-c", cmd.ptr, null };
+                    _ = std.c.execve("/bin/sh", &child_args, std.c.environ);
+                    std.c._exit(1);
+                }
+                std.c._exit(0);
             }
+            // Parent: reap child 1
+            var status: c_int = 0;
+            _ = std.c.waitpid(pid1, &status, 0);
         },
         // Window management
         .quit => ctx.running = false,
@@ -272,10 +285,11 @@ fn execute(action: Action) void {
     }
 }
 
-/// The output whose view the tag actions affect — the focused window's output,
-/// else the first output.
+/// The output whose view the tag actions affect — pointer's output first,
+/// else the focused window's output, else the first output.
 fn focusedOutput() ?*Output {
     const ctx = Context.get();
+    if (ctx.pointer_output) |o| return o;
     if (ctx.focused) |f| {
         if (f.output) |o| return o;
     }
