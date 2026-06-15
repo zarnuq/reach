@@ -92,7 +92,7 @@ pub const Binding = struct {
 // manage sequence — so we stash them and flip `pending_enable`, which the manage
 // cycle drains via `enablePending`.
 var list: std.ArrayList(*Binding) = .empty;
-var pending_enable: bool = false;
+var enable_from: usize = 0; // index of first not-yet-enabled binding
 
 /// Create every configured binding for `seat`. No-op if the compositor didn't
 /// advertise river_xkb_bindings_v1.
@@ -143,9 +143,9 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, 's', MOD, .{ .spawn = "$HOME/.local/bin/screenshot.sh ss && notify-send Screenshot 'Quick capture saved!'" });
     add(xkb, seat, 'S', MOD_SHIFT, .{ .spawn = "$HOME/.local/bin/screenshot.sh section && notify-send Screenshot 'Section saved!'" });
 
-    // Audio (using q prefix)
+    // Audio
     add(xkb, seat, 'q', MOD, .{ .spawn = "easyeffects -l EQ" });
-    add(xkb, seat, 'Q', MOD_SHIFT, .{ .spawn = "easyeffects -l None" });
+    add(xkb, seat, 'u', MOD, .{ .spawn = "easyeffects -l None" });
 
     // Media controls
     add(xkb, seat, XKB_KEY_XF86AudioPlay, .{}, .{ .spawn = "playerctl -p mpd play-pause" });
@@ -182,14 +182,13 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, '<', MOD_SHIFT, .{ .tagmon = -1 });
     add(xkb, seat, '>', MOD_SHIFT, .{ .tagmon = 1 });
 
-    pending_enable = true;
 }
 
 /// Enable any newly-created bindings. Must be called from a manage sequence.
 pub fn enablePending() void {
-    if (!pending_enable) return;
-    for (list.items) |b| b.rwm.enable();
-    pending_enable = false;
+    if (enable_from >= list.items.len) return;
+    for (list.items[enable_from..]) |b| b.rwm.enable();
+    enable_from = list.items.len;
 }
 
 fn add(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, action: Action) void {

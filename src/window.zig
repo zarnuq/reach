@@ -171,6 +171,7 @@ pub const Window = struct {
 
             // The window is gone. Unlink, fix up focus, and release proxies.
             .closed => {
+                const closing_output = self.output;
                 for (ctx.windows.items, 0..) |w, i| {
                     if (w == self) {
                         _ = ctx.windows.orderedRemove(i);
@@ -178,7 +179,17 @@ pub const Window = struct {
                     }
                 }
                 if (ctx.focused == self) {
-                    ctx.focused = if (ctx.windows.items.len > 0) ctx.windows.items[0] else null;
+                    // Prefer a visible window on the same output, then any visible window.
+                    ctx.focused = blk: {
+                        for (ctx.windows.items) |w| {
+                            if (w.output == closing_output and w.visible()) break :blk w;
+                        }
+                        for (ctx.windows.items) |w| {
+                            if (w.visible()) break :blk w;
+                        }
+                        break :blk if (ctx.windows.items.len > 0) ctx.windows.items[0] else null;
+                    };
+                    ctx.rwm.manageDirty();
                 }
                 if (self.title) |t| ctx.gpa.free(t);
                 self.node.destroy();

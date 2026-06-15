@@ -30,6 +30,17 @@ pub const Seat = struct {
     fn listener(_: *river.SeatV1, event: river.SeatV1.Event, self: *Seat) void {
         const ctx = Context.get();
         switch (event) {
+            // Track which output the pointer is over for focus/output-target decisions.
+            .pointer_enter => |ev| {
+                for (ctx.windows.items) |w| {
+                    if (w.rwm == ev.window) {
+                        ctx.pointer_output = w.output;
+                        break;
+                    }
+                }
+            },
+            .pointer_leave => {},
+
             // Click-to-focus and pointer tracking
             .window_interaction => |ev| {
                 for (ctx.windows.items) |w| {
