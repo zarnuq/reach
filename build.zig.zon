@@ -1,0 +1,62 @@
+.{
+    // The package name. Other packages depending on us would use this as the
+    // key in their `.dependencies` table. We are a leaf application, so this is
+    // mostly cosmetic.
+    .name = .confluence,
+
+    // Semantic version of Confluence itself.
+    .version = "0.0.0-dev",
+
+    // Globally-unique package id. Generated once by the Zig toolchain the first
+    // time you run `zig build` with this field deleted. Leave it alone after
+    // that — changing it on a fork is considered "hostile" (it tries to assume
+    // the identity of the upstream package). For a brand-new project you can
+    // delete this line and let `zig build` regenerate it.
+    .fingerprint = 0x43abe10e5533d49,
+
+    // The oldest Zig the project promises to build with. river and kwm both sit
+    // on 0.16.x, and the std library / zig-wayland API used here matches that.
+    // 0.16 is still volatile, so pin your local toolchain to match.
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{
+        // zig-wayland: ifreund's Wayland bindings + protocol scanner. This is
+        // exactly what river and kwm use, so the generated API (`wayland.client.wl`,
+        // `wayland.client.river`, …) matches the code in src/.
+        //
+        // The url/hash below are the same v0.6.0 artifact kwm pins, so they are
+        // known-good. `zig build` will fetch and cache this on first build; after
+        // that no network is needed.
+        .wayland = .{
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/v0.6.0.tar.gz",
+            .hash = "wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX",
+        },
+
+        // M4 bar dependencies — the same packages kwm and dwlb use, so the bar
+        // renders identically (Nerd Font glyphs, antialiasing, color markup):
+        //   pixman — software image compositing (fill rects, blit glyphs).
+        //   fcft   — font loading + glyph rasterization (wraps freetype/fontconfig);
+        //            handles "JetBrainsMono Nerd Font:size=11" exactly like dwlb.
+        // The `^fg(RRGGBB)` color escapes in status text are hand-parsed (see
+        // bar.zig), so no regex dependency is needed.
+        .pixman = .{
+            .url = "https://codeberg.org/ifreund/zig-pixman/archive/v0.3.0.tar.gz",
+            .hash = "pixman-0.3.0-LClMnz2VAAAs7QSCGwLimV5VUYx0JFnX5xWU6HwtMuDX",
+        },
+        .fcft = .{
+            .url = "https://github.com/kewuaa/zig-fcft/archive/refs/tags/v2.0.0.tar.gz",
+            .hash = "fcft-2.0.0-zcx6C5EaAADIEaQzDg5D4UvFFMjSEwDE38vdE9xObeN9",
+        },
+
+        // NOTE: zig-xkbcommon will be added at the keychord milestone (M5).
+    },
+
+    // Files that belong to the package, used when this package is consumed by
+    // another. For a leaf app it just needs to cover the build inputs.
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "protocol",
+    },
+}

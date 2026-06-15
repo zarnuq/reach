@@ -1,0 +1,13 @@
+.{
+    .name = .pixman,
+    .version = "0.3.0",
+    .minimum_zig_version = "0.14.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "pixman.zig",
+        "LICENSE",
+    },
+    .dependencies = .{},
+    .fingerprint = 0x16aa7fe79f4c292c,
+}
