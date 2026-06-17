@@ -1,13 +1,13 @@
 // status.zig — the baked-in status engine (someblocks, in-process).
 //
-// Instead of an external someblocks process piping text to us, Confluence runs
+// Instead of an external someblocks process piping text to us, reach runs
 // the configured blocks itself (config.bar.blocks). The semantics match suckless
 // someblocks exactly:
 //   * each block is `icon ++ first line of <command> stdout`;
 //   * blocks are joined by `config.bar.delim`, empty blocks omitted;
 //   * a block re-runs every `interval` seconds (driven by a 1s timerfd), and/or
 //     when we receive SIGRTMIN+`signal` (driven by a signalfd) — so the user's
-//     existing `kill -35 $(pidof confluence)` style refresh still works.
+//     existing `kill -35 $(pidof reach)` style refresh still works.
 //
 // Commands run through libc `popen`, i.e. `/bin/sh -c <command>`, so `$HOME`,
 // pipes and globs behave just like in the someblocks blocks.h.

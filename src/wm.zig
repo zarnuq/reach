@@ -29,6 +29,7 @@ const Seat = @import("seat.zig").Seat;
 /// Initialise the global context and attach the window-manager listener.
 pub fn init(
     gpa: std.mem.Allocator,
+    registry: *wl.Registry,
     rwm: *river.WindowManagerV1,
     xkb_bindings: ?*river.XkbBindingsV1,
     layer_shell: ?*river.LayerShellV1,
@@ -40,6 +41,7 @@ pub fn init(
 ) void {
     Context.init(
         gpa,
+        registry,
         rwm,
         xkb_bindings,
         layer_shell,
@@ -118,6 +120,22 @@ fn manageCycle() void {
     // allows enable() inside a manage sequence).
     binding.enablePending();
 
+    // Open/close a pending chord submap (enable/disable of its sub-bindings and
+    // ensure_next_key_eaten are likewise manage-only requests).
+    binding.applySubmap();
+
+    // Mark the selected monitor as the default for new layer surfaces (rofi,
+    // etc.) so they open on the focused output. set_default may only be issued
+    // inside a manage sequence, and only when the selection has moved.
+    if (ctx.current_output) |o| {
+        if (ctx.layer_default != o) {
+            if (o.layer_output) |lo| {
+                lo.setDefault();
+                ctx.layer_default = o;
+            }
+        }
+    }
+
     // Tile each output.
     for (ctx.outputs.items) |o| layout.arrange(o);
 
@@ -133,6 +151,10 @@ fn manageCycle() void {
     if (ctx.focused) |f| {
         if (ctx.primary_seat) |s| s.rwm.focusWindow(f.rwm);
     }
+
+    // Warp the pointer to the focused window if a focus/layout keybind asked for
+    // it (dwl warpcursor). Done last, so window geometry from arrange() is final.
+    binding.applyWarp();
 }
 
 /// RENDER: position and show every window, draw the tmux borders, then the bars.
@@ -181,8 +203,12 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
                 return;
             };
 
-            // Inherit the pointer's output, else focused window's output, else first
-            var out: ?*Output = ctx.pointer_output;
+            // Place the window on the selected monitor (dwl spawns on `selmon`),
+            // so apps launched by a keybind appear where the keyboard focus is —
+            // not on whatever output happens to be first (DP-1). Fall back to the
+            // pointer's output, then the focused window's output, then the first.
+            var out: ?*Output = ctx.current_output;
+            if (out == null) out = ctx.pointer_output;
             if (out == null) {
                 if (ctx.focused) |f| out = f.output;
             }

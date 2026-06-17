@@ -26,10 +26,14 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const wp = wayland.client.wp;
 const river = wayland.client.river;
+const zwlr = wayland.client.zwlr;
 
 const wm = @import("wm.zig");
 const bar = @import("bar.zig");
+const binding = @import("binding.zig");
 const status = @import("status.zig");
+const outputconfig = @import("outputconfig.zig");
+const inputconfig = @import("inputconfig.zig");
 const Font = @import("render/font.zig");
 
 /// Holds the global objects we bind from the registry. Everything is optional
@@ -54,9 +58,21 @@ const Globals = struct {
     rwm: ?*river.WindowManagerV1 = null,
     xkb_bindings: ?*river.XkbBindingsV1 = null,
     layer_shell: ?*river.LayerShellV1 = null,
+
+    // wlr-output-management: lets us apply config.monitors (modes/positions/…).
+    output_manager: ?*zwlr.OutputManagerV1 = null,
+
+    // river-input-management: lets us apply keyboard repeat (config.repeat_*).
+    input_manager: ?*river.InputManagerV1 = null,
 };
 
 pub fn main() !void {
+    // Set the process name (/proc/self/comm) to "reach". We're launched through
+    // the system dynamic loader (`/lib64/ld-linux-x86-64.so.2 reach`, see run.sh),
+    // so without this the kernel-set comm is "ld-linux-x86-64" — which is what
+    // fastfetch and `pidof` would otherwise see. PR_SET_NAME = 15.
+    _ = std.os.linux.prctl(@intFromEnum(std.os.linux.PR.SET_NAME), @intFromPtr("reach"), 0, 0, 0);
+
     // We link libc (for libwayland-client), so the C allocator is the simplest,
     // most stable choice and avoids churn in std.heap's debug-allocator naming.
     const gpa = std.heap.c_allocator;
@@ -95,6 +111,7 @@ pub fn main() !void {
     //    until river tells us to stop.
     wm.init(
         gpa,
+        registry,
         rwm,
         globals.xkb_bindings,
         globals.layer_shell,
@@ -112,6 +129,25 @@ pub fn main() !void {
     Font.initLibrary() catch |err| log.err("fcft init failed: {} — bar disabled", .{err});
     bar.initFont(gpa);
     if (bar.enabled) status.start();
+
+    // Output configuration (config.monitors). Applied asynchronously once the
+    // compositor advertises heads/modes during the event loop.
+    if (globals.output_manager) |om| {
+        outputconfig.init(om);
+    } else {
+        log.warn("no zwlr_output_manager_v1 — monitor config disabled", .{});
+    }
+
+    // Input configuration (keyboard repeat). Applied as devices are announced.
+    if (globals.input_manager) |im| {
+        inputconfig.init(im);
+    } else {
+        log.warn("no river_input_manager_v1 — keyboard repeat config disabled", .{});
+    }
+
+    // Fire the startup programs (dwl-style autostart) now that we're connected;
+    // children inherit our WAYLAND_DISPLAY and so can connect to river.
+    binding.runAutostart();
 
     try wm.run(display);
     log.info("clean shutdown", .{});
@@ -142,6 +178,10 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
                 globals.xkb_bindings = registry.bind(g.name, river.XkbBindingsV1, 2) catch return;
             } else if (std.mem.orderZ(u8, g.interface, river.LayerShellV1.interface.name) == .eq) {
                 globals.layer_shell = registry.bind(g.name, river.LayerShellV1, 1) catch return;
+            } else if (std.mem.orderZ(u8, g.interface, zwlr.OutputManagerV1.interface.name) == .eq) {
+                globals.output_manager = registry.bind(g.name, zwlr.OutputManagerV1, 1) catch return;
+            } else if (std.mem.orderZ(u8, g.interface, river.InputManagerV1.interface.name) == .eq) {
+                globals.input_manager = registry.bind(g.name, river.InputManagerV1, 1) catch return;
             }
         },
         // A global went away. We don't bind anything hot-pluggable at M1, so there

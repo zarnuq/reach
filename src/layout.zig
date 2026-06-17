@@ -22,12 +22,16 @@ const bar = @import("bar.zig");
 pub fn arrange(out: *Output) void {
     const ctx = Context.get();
 
-    // Gather this output's tiled, visible windows in stack order (head = master).
-    // Windows on tags the output isn't currently viewing are skipped.
+    // Gather this output's tiled windows on a currently-viewed tag, in stack
+    // order (head = master). We gate on the tag intersection directly rather than
+    // visible(): visible() requires `mapped`, but arrange is precisely what first
+    // lays a window out and sets `mapped = true` (below). Gating on visible() here
+    // would deadlock — a freshly-created tiled window (mapped == false) would never
+    // be included, so it would never get mapped, and would never appear.
     var tiled: std.ArrayList(*Window) = .empty;
     defer tiled.deinit(ctx.gpa);
     for (ctx.windows.items) |w| {
-        if (w.output == out and !w.floating and w.visible()) {
+        if (w.output == out and !w.floating and !w.fullscreen and (w.tags & out.tagset) != 0) {
             tiled.append(ctx.gpa, w) catch return; // OOM: skip this frame
         }
     }

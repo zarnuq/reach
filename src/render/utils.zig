@@ -1,7 +1,7 @@
 // render/utils.zig — small helpers shared by the font and bar code.
 //
 // These wrap the two foreign libraries (fcft for fonts, pixman for compositing)
-// in the couple of conversions Confluence actually needs: UTF-8 → UTF-32 (fcft
+// in the couple of conversions reach actually needs: UTF-8 → UTF-32 (fcft
 // rasterizes codepoint arrays), measuring a rasterized run's width, and turning
 // our 0xRRGGBBAA config colors into pixman's 16-bit-per-channel `Color`.
 

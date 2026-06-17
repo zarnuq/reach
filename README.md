@@ -1,12 +1,12 @@
-# Confluence
+# reach
 
 A minimal, dwl-spirited tiling window manager for the
 [river](https://codeberg.org/river/river) Wayland compositor, written in Zig.
 
-river is non-monolithic: it is *only* the compositor. Confluence is a client that
+river is non-monolithic: it is *only* the compositor. reach is a client that
 speaks `river-window-management-v1` and decides policy — layout, focus, tmux-style
 shared borders, and a built-in dwlb-style status bar fed by `someblocks`. See
-`../confluence-zig-plan.md` for the full design.
+`../reach-zig-plan.md` for the full design.
 
 ## Status: Milestone 1 — skeleton
 
@@ -28,7 +28,7 @@ Requires **Zig 0.16.x** (same as kwm/river) and `libwayland-client`. The first
 build fetches `zig-wayland` from the network and caches it.
 
 ```sh
-zig build                       # -> zig-out/bin/confluence
+zig build                       # -> zig-out/bin/reach
 zig build -Doptimize=ReleaseSafe
 zig build run                   # build + run
 ```
@@ -36,12 +36,12 @@ zig build run                   # build + run
 ## Run
 
 river only advertises the window-management protocol to the process it launches
-itself, so start confluence via river's `-c`:
+itself, so start reach via river's `-c`:
 
 ```sh
 nix develop
 zig build
-WLR_RENDERER=pixman river -c "$PWD/zig-out/bin/confluence"
+WLR_RENDERER=pixman river -c "$PWD/zig-out/bin/reach"
 ```
 
 `WLR_RENDERER=pixman` forces wlroots' software renderer, which sidesteps EGL/

@@ -6,7 +6,7 @@
 // buffer. This is the same library dwlb and kwm use, so "JetBrainsMono Nerd
 // Font:size=11" renders identically to the user's current bar.
 //
-// One Font is shared process-wide (loaded once in main). Confluence assumes
+// One Font is shared process-wide (loaded once in main). reach assumes
 // scale 1 (no fractional-scale handling yet), so we ask fcft for the default dpi.
 
 const std = @import("std");

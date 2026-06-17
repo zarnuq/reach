@@ -6,7 +6,7 @@
 // THE FOCUS BEHAVIOR the user asked about (dwlb's per-monitor highlight): the
 // bar on the *focused* output draws its title region in the `select` scheme
 // (mauve), every other output uses `normal` (dark). dwlb gets the "this monitor
-// is active" signal from dwl's IPC `active` event; Confluence is the WM, so it
+// is active" signal from dwl's IPC `active` event; reach is the WM, so it
 // just compares each output against the focused one (`currentOutput`).
 //
 // Rendering is software: pixman fills the background rectangles and composites

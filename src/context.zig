@@ -1,7 +1,7 @@
 // context.zig — the global shared state.
 //
 // Rather than thread a `*Wm` pointer through every per-object event callback,
-// Confluence keeps one process-global Context (the same approach kwm uses). Each
+// reach keeps one process-global Context (the same approach kwm uses). Each
 // Window/Output/Seat listener gets a pointer to *its own* wrapper as callback
 // data, and reaches everything else via `Context.get()`.
 //
@@ -23,6 +23,11 @@ const BorderSurface = @import("border.zig").BorderSurface;
 
 pub const Context = struct {
     gpa: std.mem.Allocator,
+
+    // The Wayland registry. Kept so outputs can bind their wl_output on demand
+    // (river hands us only the numeric global name in river_output_v1.wl_output;
+    // we bind it to read the connector name and order monitors by config).
+    registry: *wl.Registry,
 
     // river + core globals (bound in main.zig). Optionals are globals we may use
     // later (M3/M4/M5) and that a minimal compositor could lack.
@@ -60,6 +65,18 @@ pub const Context = struct {
     // mouse position can differ without the two disagreeing about the target.
     current_output: ?*Output = null,
 
+    // The output we last told river is the default for new layer surfaces (rofi,
+    // notifications, …) via river_layer_shell_output_v1.set_default. Tracked so the
+    // manage cycle only re-issues set_default when the selection actually moves.
+    layer_default: ?*Output = null,
+
+    // Set by keyboard focus/layout actions to warp the pointer onto the newly
+    // focused window (dwl `warpcursor`) on the next manage cycle — applied after
+    // arrange() so the geometry is current. Keeps the cursor with the keyboard
+    // focus, which also stops sloppy_focus from snapping focus back on the next
+    // stray pointer motion.
+    warp_pending: bool = false,
+
     running: bool = true,
 };
 
@@ -73,6 +90,7 @@ pub fn get() *Context {
 /// Initialise the global. Called once from wm.init with the bound globals.
 pub fn init(
     gpa: std.mem.Allocator,
+    registry: *wl.Registry,
     rwm: *river.WindowManagerV1,
     xkb_bindings: ?*river.XkbBindingsV1,
     layer_shell: ?*river.LayerShellV1,
@@ -84,6 +102,7 @@ pub fn init(
 ) void {
     instance = .{
         .gpa = gpa,
+        .registry = registry,
         .rwm = rwm,
         .xkb_bindings = xkb_bindings,
         .layer_shell = layer_shell,

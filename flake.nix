@@ -1,5 +1,5 @@
 {
-  # Dev environment for Confluence.
+  # Dev environment for reach.
   #
   # WHY THIS EXISTS: Zig itself comes from Nix (home-manager), so the compiler
   # links against Nix's glibc and uses Nix's dynamic loader. If the build then
@@ -16,7 +16,7 @@
   #
   # (With direnv: `echo "use flake" > .envrc && direnv allow` to auto-enter.)
 
-  description = "Confluence — a minimal tiling window manager for the river compositor";
+  description = "reach — a minimal tiling window manager for the river compositor";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
@@ -49,7 +49,7 @@
           freetype
           fontconfig
 
-          river # the compositor — for `river -c ./zig-out/bin/confluence` testing
+          river # the compositor — for `river -c ./zig-out/bin/reach` testing
         ];
       };
     };

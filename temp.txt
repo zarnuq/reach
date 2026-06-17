@@ -1,1 +1,0 @@
-WLR_RENDERER=nvidia river -c "$PWD/zig-out/bin/confluence"

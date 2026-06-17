@@ -1,4 +1,4 @@
-// build.zig — Confluence build script.
+// build.zig — reach build script.
 //
 // This file does NOT compile the program directly; it builds the *build graph*
 // (`b`) that Zig's build runner then executes. The big jobs here are:
@@ -7,7 +7,7 @@
 //      scanner turns each protocol into type-safe Zig code (objects, requests,
 //      event unions). That generated code becomes the `wayland` module we import
 //      from src/.
-//   2. Define the `confluence` executable, give it the `wayland` module, and
+//   2. Define the `reach` executable, give it the `wayland` module, and
 //      link the C libraries the bindings call into (`libwayland-client`, libc).
 //
 // Milestone 1 keeps this minimal: only the globals we actually touch are
@@ -46,6 +46,15 @@ pub fn build(b: *std.Build) void {
     scanner.addCustomProtocol(b.path("protocol/river-window-management-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/river-xkb-bindings-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/river-layer-shell-v1.xml"));
+    // wlr-output-management: in river's non-monolithic split, output config
+    // (mode/position/transform/scale) is NOT part of river-window-management — it
+    // goes through this standard wlroots protocol, which river implements. reach
+    // binds it to apply the config.monitors table at startup (dwl monrules).
+    scanner.addCustomProtocol(b.path("protocol/wlr-output-management-unstable-v1.xml"));
+    // river-input-management: like outputs, input config (keyboard repeat, …) is
+    // NOT part of river-window-management — it goes through this sibling river
+    // protocol. reach binds it to apply config.repeat_rate/repeat_delay.
+    scanner.addCustomProtocol(b.path("protocol/river-input-management-v1.xml"));
 
     // `generate(interface, version)` emits Zig for exactly the interfaces we use,
     // at the version we request. We only list what milestone 1 needs plus the
@@ -62,6 +71,8 @@ pub fn build(b: *std.Build) void {
     scanner.generate("river_window_manager_v1", 4); // THE protocol that drives us
     scanner.generate("river_xkb_bindings_v1", 2); // keybinds (wired up in M5)
     scanner.generate("river_layer_shell_v1", 1); // border/bar surfaces (M3/M4)
+    scanner.generate("zwlr_output_manager_v1", 1); // output config (monitors table)
+    scanner.generate("river_input_manager_v1", 1); // input config (keyboard repeat)
 
     // Wrap the generated source as an importable module named "wayland".
     const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
@@ -76,7 +87,7 @@ pub fn build(b: *std.Build) void {
     // 2. The executable
     // ----------------------------------------------------------------------
     const exe = b.addExecutable(.{
-        .name = "confluence",
+        .name = "reach",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -101,13 +112,13 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkSystemLibrary("fcft", .{});
     // TODO(M5 keychords): exe.root_module.linkSystemLibrary("xkbcommon", .{});
 
-    // `zig build` installs this into zig-out/bin/confluence.
+    // `zig build` installs this into zig-out/bin/reach.
     b.installArtifact(exe);
 
     // `zig build run` — handy for launching inside a nested river session.
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
-    const run_step = b.step("run", "Build and run confluence");
+    const run_step = b.step("run", "Build and run reach");
     run_step.dependOn(&run_cmd.step);
 }

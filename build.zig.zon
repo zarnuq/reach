@@ -2,9 +2,9 @@
     // The package name. Other packages depending on us would use this as the
     // key in their `.dependencies` table. We are a leaf application, so this is
     // mostly cosmetic.
-    .name = .confluence,
+    .name = .reach,
 
-    // Semantic version of Confluence itself.
+    // Semantic version of reach itself.
     .version = "0.0.0-dev",
 
     // Globally-unique package id. Generated once by the Zig toolchain the first
@@ -12,7 +12,7 @@
     // that — changing it on a fork is considered "hostile" (it tries to assume
     // the identity of the upstream package). For a brand-new project you can
     // delete this line and let `zig build` regenerate it.
-    .fingerprint = 0x43abe10e5533d49,
+    .fingerprint = 0xd64339af5dc02d4,
 
     // The oldest Zig the project promises to build with. river and kwm both sit
     // on 0.16.x, and the std library / zig-wayland API used here matches that.

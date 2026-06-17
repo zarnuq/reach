@@ -116,15 +116,32 @@ pub fn update() void {
 }
 
 /// Compute the focused window's highlight rectangles, porting dwl's
-/// `drawclientborders` half-line geometry into confluence's gapped layout. The
+/// `drawclientborders` half-line geometry into reach's gapped layout. The
 /// focused window's index `cidx` among the tiled windows and the total `total`
 /// drive which shared edges get a line and where the half-lines fall. Returns
 /// null when there is nothing to highlight.
 fn focusedRects() ?struct { rects: [4]Rect, n: usize, out_x: i32, out_y: i32 } {
     const ctx = Context.get();
     const f = ctx.focused orelse return null;
-    if (f.floating or !f.visible()) return null;
+    if (f.fullscreen or !f.visible()) return null;
     const out = f.output orelse return null;
+
+    // Floating window: it has no shared gutters with tiled neighbors (it stacks
+    // above them), so the tmux half-line model doesn't apply. Draw a full box
+    // outline instead — a focus ring inset along the window's own edges (inset, so
+    // it can't spill off-screen when the window is flush against an output edge).
+    if (f.floating) {
+        const t = config.border_thickness;
+        const w = f.width;
+        const h = f.height;
+        if (w <= 0 or h <= 0) return null;
+        var box: [4]Rect = undefined;
+        box[0] = .{ .x = f.x, .y = f.y, .w = w, .h = t }; // top
+        box[1] = .{ .x = f.x, .y = f.y + h - t, .w = w, .h = t }; // bottom
+        box[2] = .{ .x = f.x, .y = f.y, .w = t, .h = h }; // left
+        box[3] = .{ .x = f.x + w - t, .y = f.y, .w = t, .h = h }; // right
+        return .{ .rects = box, .n = 4, .out_x = out.x, .out_y = out.y };
+    }
 
     // Find the focused window's index among the tiled, visible windows on its
     // output, in the same order layout.arrange used (master first).

@@ -47,7 +47,7 @@ pub fn init(self: *Self, width: i32, height: i32) !void {
     const size = stride * height;
 
     // Anonymous file in memory, shared with the compositor by passing its fd.
-    const fd = try posix.memfd_create("confluence-bar", linux.MFD.CLOEXEC);
+    const fd = try posix.memfd_create("reach-bar", linux.MFD.CLOEXEC);
     defer _ = linux.close(fd);
     // std.posix has no ftruncate wrapper; libc is linked, so call it directly.
     if (std.c.ftruncate(fd, @intCast(size)) != 0) return error.TruncateFailed;
