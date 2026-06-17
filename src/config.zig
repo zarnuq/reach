@@ -28,6 +28,55 @@ pub const sloppy_focus = true;
 pub const repeat_rate: i32 = 50;
 pub const repeat_delay: i32 = 300;
 
+// ---------------------------------------------------------------------------
+// Environment (dwl `setenv` / setupenv)
+// ---------------------------------------------------------------------------
+//
+// Each entry is applied with setenv(key, val, overwrite=1) right after reach
+// connects to the Wayland display, before autostart. Processes spawned by
+// reach (autostart, keybinds, runsvdir) all inherit these, fixing services
+// that need WAYLAND_DISPLAY, QT/GTK hints, etc.
+
+pub const env = [_][2][:0]const u8{
+
+    .{ "PATH",  "/usr/bin:/usr/sbin:/bin:/sbin:$HOME/.local/bin:/usr/local/bin:$HOME/.config/emacs/bin:/nix/var/nix/profiles/default/bin:$HOME/.nix-profile/bin" },
+    .{ "XDG_CURRENT_DESKTOP",  "river" },
+    .{ "SVDIR",                "/home/miles/.local/sv" },
+    .{ "XDG_SESSION_TYPE",     "wayland" },
+    // WAYLAND_DISPLAY must NOT be set here — river exports the correct socket
+    // name when it spawns reach; hardcoding it breaks children if river chose
+    // a name other than wayland-0.
+    .{ "DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus" },
+
+    .{ "QT_QPA_PLATFORMTHEME", "qt6ct" },
+    .{ "QT_QPA_PLATFORM",      "wayland" },
+    .{ "QT_STYLE_OVERRIDE",    "kvantum" },
+
+    .{ "JAVA_HOME",            "/usr/lib/jvm/java-21-openjdk" },
+    .{ "_JAVA_OPTIONS",        "-Djava.util.prefs.userRoot=/home/miles/.config/java" },
+
+    .{ "XDG_DATA_DIRS",        "/home/miles/.nix-profile/share:/usr/local/share:/usr/share" },
+
+    .{ "CUDA_CACHE_PATH",      "/home/miles/.cache/nv" },
+    .{ "LIBVA_DRIVER_NAME",    "nvidia" },
+    .{ "NVD_BACKEND",          "direct" },
+
+    .{ "GTK2_RC_FILES",        "/home/miles/.config/gtk-2.0/gtkrc" },
+
+    .{ "CARGO_HOME",           "/home/miles/.local/share/cargo" },
+    .{ "RUSTUP_HOME",          "/home/miles/.local/share/rustup" },
+    .{ "GOPATH",               "/home/miles/.local/share/go" },
+    .{ "GNUPGHOME",            "/home/miles/.local/share/gnupg" },
+    .{ "NPM_CONFIG_PREFIX",    "/home/miles/.local/share/npm" },
+    .{ "NPM_CONFIG_CACHE",     "/home/miles/.cache/npm" },
+    .{ "BUN_DIR",              "/home/miles/.local/share/bun" },
+    .{ "WINEPREFIX",           "/home/miles/.local/share/wine" },
+    .{ "MINECRAFT_HOME",       "/home/miles/.local/share/minecraft" },
+    .{ "SQLITE_HISTORY",       "/home/miles/.local/state/sqlite_history" },
+    .{ "CLAUDE_CONFIG_DIR",    "/home/miles/.cache/claude" },
+    .{ "W3M_DIR",              "/home/miles/.local/share/w3m" },
+};
+
 /// Commands run once at startup (dwl's `autostart[]`). Each is passed to
 /// `/bin/sh -c`, so `$HOME`, pipes, and `&` all work. The default mirrors the
 /// user's dwl setup with a single session script that brings up the runit user
@@ -86,7 +135,7 @@ pub const Monitor = struct {
 pub const monitors = [_]Monitor{
     .{ .name = "DP-3", .w = 3440, .h = 1440, .x = 0, .y = 0, .transform = .rotate_180 },
     .{ .name = "DP-2", .w = 3440, .h = 1440, .x = 0, .y = 1440 },
-    .{ .name = "DP-1", .w = 1920, .h = 1080, .x = 3440, .y = 1440, .transform = .rotate_270 },
+    .{ .name = "DP-1", .w = 1920, .h = 1080, .refresh = 165000, .x = 3440, .y = 1440, .transform = .rotate_270 },
     .{ .name = "eDP-1", .w = 1920, .h = 1200 }, // laptop panel, auto-placed
 };
 
@@ -192,7 +241,7 @@ pub const tags = struct {
 
 pub const bar = struct {
     /// fontconfig name. fcft resolves this; Nerd Font glyphs work out of the box.
-    pub const font = "JetBrainsMono Nerd Font:size=16";
+    pub const font = "JetBrainsMono Nerd Font:size=15";
 
     /// Draw the bar at the top of the output (false = bottom).
     pub const top = true;
@@ -237,11 +286,11 @@ pub const bar = struct {
 
     /// Ported from the user's ~/.local/src/someblocks/blocks.h.
     pub const blocks = [_]Block{
-        .{ .icon = "", .command = "~/.local/src/someblocks/blocks/ip.sh", .interval = 30, .signal = 0 },
-        .{ .icon = "", .command = "$HOME/.local/src/someblocks/blocks/audio.sh", .interval = 60, .signal = 1 },
+        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/ip.sh", .interval = 30, .signal = 0 },
+        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/audio.sh", .interval = 60, .signal = 1 },
         .{ .icon = "", .command = "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]\\+%' | head -1", .interval = 1, .signal = 1 },
-        .{ .icon = "", .command = "$HOME/.local/src/someblocks/blocks/mic.sh", .interval = 1, .signal = 2 },
+        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/mic.sh", .interval = 1, .signal = 2 },
         .{ .icon = "", .command = "date '+%a %m/%d %I:%M %p'", .interval = 1, .signal = 0 },
-        .{ .icon = "", .command = "$HOME/.local/src/someblocks/blocks/battery.sh", .interval = 30, .signal = 0 },
+        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/battery.sh", .interval = 30, .signal = 0 },
     };
 };

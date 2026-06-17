@@ -28,6 +28,7 @@ const wp = wayland.client.wp;
 const river = wayland.client.river;
 const zwlr = wayland.client.zwlr;
 
+const config = @import("config.zig");
 const wm = @import("wm.zig");
 const bar = @import("bar.zig");
 const binding = @import("binding.zig");
@@ -66,6 +67,8 @@ const Globals = struct {
     input_manager: ?*river.InputManagerV1 = null,
 };
 
+extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
 pub fn main() !void {
     // Set the process name (/proc/self/comm) to "reach". We're launched through
     // the system dynamic loader (`/lib64/ld-linux-x86-64.so.2 reach`, see run.sh),
@@ -82,6 +85,11 @@ pub fn main() !void {
     const display = try wl.Display.connect(null);
     defer display.disconnect();
     log.info("connected to wayland display", .{});
+
+    // Export session environment variables (dwl setupenv). Done immediately
+    // after connecting so that every child process — autostart, keybinds,
+    // and runsvdir user services — inherits the correct Wayland/toolkit env.
+    for (config.env) |kv| _ = setenv(kv[0].ptr, kv[1].ptr, 1);
 
     // 2. Discover globals. getRegistry() asks the server to advertise every
     //    global; each advertisement fires a `.global` event on our listener. A

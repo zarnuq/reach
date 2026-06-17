@@ -159,7 +159,7 @@ pub const Bar = struct {
         self.shell.syncNextCommit();
         self.wl_surface.commit();
 
-        const y = out.y + if (config.bar.top) 0 else out.height - h;
+        const y = out.y + if (config.bar.top) @as(i32, 0) else out.height - h;
         self.node.setPosition(out.x, y);
         self.node.placeTop();
     }

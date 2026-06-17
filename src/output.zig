@@ -38,6 +38,11 @@ pub const Output = struct {
     mfact: f32 = 0.55,
     nmaster: i32 = 1,
 
+    // Transform applied by outputconfig. Needed so the bar and layout can place
+    // themselves at the correct physical edge: rotate_180 flips the y-axis, so
+    // "logical top" (y=0) is physically the bottom of the panel.
+    transform: config.Transform = .normal,
+
     // This output's status bar (M4). null when the bar subsystem is disabled
     // (no wl_shm / font failed to load) or if its surfaces couldn't be created.
     bar: ?*bar.Bar = null,
@@ -79,6 +84,7 @@ pub const Output = struct {
             .position => |ev| {
                 self.x = ev.x;
                 self.y = ev.y;
+                log.info("output position: ({d},{d})", .{ self.x, self.y });
             },
             // Resolution. The `mode` arg is ignored for now.
             .dimensions => |ev| {
@@ -139,6 +145,15 @@ fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
             if (self.name) |n| ctx.gpa.free(n);
             self.name = ctx.gpa.dupeZ(u8, std.mem.span(ev.name)) catch null;
             log.info("wl_output name = \"{s}\" (config rank {d})", .{ std.mem.span(ev.name), configRank(self) });
+            // Inherit the transform from config.monitors so bar.zig and
+            // layout.zig can account for outputs where the y-axis is flipped
+            // (rotate_180: logical top = physical bottom).
+            for (config.monitors) |m| {
+                if (std.mem.eql(u8, m.name, std.mem.span(ev.name))) {
+                    self.transform = m.transform;
+                    break;
+                }
+            }
             reorder();
             logOrder();
         },

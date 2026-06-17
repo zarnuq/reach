@@ -17,9 +17,5 @@
 #
 # WLR_NO_HARDWARE_CURSORS=1 works around NVIDIA's broken cursor planes.
 # stdbuf + tee give live, line-buffered logs.
-stdbuf -oL -eL env \
-    WLR_RENDERER=vulkan \
-    WLR_NO_HARDWARE_CURSORS=1 \
-    /lib64/ld-linux-x86-64.so.2 "$HOME/.local/bin/river" \
-        -c "/lib64/ld-linux-x86-64.so.2 $PWD/zig-out/bin/reach" 2>&1 \
-    | stdbuf -oL tee /tmp/river-vulkan.log
+river -c ./zig-out/bin/reach 2>&1 \
+| stdbuf -oL tee /tmp/river-vulkan.log

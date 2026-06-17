@@ -44,6 +44,8 @@ pub fn arrange(out: *Output) void {
     const bar_h = bar.height();
     const top_reserve: i32 = if (config.bar.top) bar_h else 0;
     const oy = config.outer_gap + top_reserve;
+    const log = std.log.scoped(.layout);
+    log.info("arrange {s}: out({d}x{d}@{d},{d}) bar_h={d} oy={d}", .{ out.name orelse "?", out.width, out.height, out.x, out.y, bar_h, oy });
 
     // Usable area inside the outer gap, minus the bar strip.
     const usable_w = out.width - 2 * config.outer_gap;

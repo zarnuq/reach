@@ -160,7 +160,7 @@ fn focusedRects() ?struct { rects: [4]Rect, n: usize, out_x: i32, out_y: i32 } {
     const t = config.border_thickness;
     const half_t = @divFloor(t, 2);
     const half_g = @divFloor(ig, 2);
-    const nmaster = config.nmaster;
+    const nmaster = out.nmaster;
 
     // Usable area (output-local) and the master column width, matching layout.zig
     // — including the strip the bar reserves at the top/bottom.
@@ -172,7 +172,7 @@ fn focusedRects() ?struct { rects: [4]Rect, n: usize, out_x: i32, out_y: i32 } {
     const uh = out.height - 2 * og - bar_h;
     const nstack = total - @min(total, nmaster);
     const master_w: i32 = if (nstack > 0)
-        @intFromFloat(config.mfact * @as(f32, @floatFromInt(uw)))
+        @intFromFloat(out.mfact * @as(f32, @floatFromInt(uw)))
     else
         uw;
     // Center of the vertical gutter dividing master and stack columns.
