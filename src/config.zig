@@ -38,8 +38,7 @@ pub const repeat_delay: i32 = 300;
 // that need WAYLAND_DISPLAY, QT/GTK hints, etc.
 
 pub const env = [_][2][:0]const u8{
-
-    .{ "PATH",  "/usr/bin:/usr/sbin:/bin:/sbin:$HOME/.local/bin:/usr/local/bin:$HOME/.config/emacs/bin:/nix/var/nix/profiles/default/bin:$HOME/.nix-profile/bin" },
+    .{ "PATH","/usr/bin:/usr/sbin:/bin:/sbin:/home/miles/.local/bin:/usr/local/bin:/home/miles/.config/emacs/bin:/nix/var/nix/profiles/default/bin:/home/miles/.nix-profile/bin" },
     .{ "XDG_CURRENT_DESKTOP",  "river" },
     .{ "SVDIR",                "/home/miles/.local/sv" },
     .{ "XDG_SESSION_TYPE",     "wayland" },
@@ -286,11 +285,11 @@ pub const bar = struct {
 
     /// Ported from the user's ~/.local/src/someblocks/blocks.h.
     pub const blocks = [_]Block{
-        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/ip.sh", .interval = 30, .signal = 0 },
-        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/audio.sh", .interval = 60, .signal = 1 },
+        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/ip.sh", .interval = 30, .signal = 0 },
+        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/audio.sh", .interval = 60, .signal = 1 },
         .{ .icon = "", .command = "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]\\+%' | head -1", .interval = 1, .signal = 1 },
-        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/mic.sh", .interval = 1, .signal = 2 },
+        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/mic.sh", .interval = 1, .signal = 2 },
         .{ .icon = "", .command = "date '+%a %m/%d %I:%M %p'", .interval = 1, .signal = 0 },
-        .{ .icon = "", .command = "$XDG_CONFIG_HOME/reach/blocks/battery.sh", .interval = 30, .signal = 0 },
+        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/battery.sh", .interval = 30, .signal = 0 },
     };
 };

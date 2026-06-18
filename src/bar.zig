@@ -66,6 +66,9 @@ pub const Bar = struct {
     shell: *river.ShellSurfaceV1,
     node: *river.NodeV1,
     buffers: [2]Buffer = .{ .{}, .{} },
+    /// True while the bar is hidden (a fullscreen window owns the output). Tracked
+    /// so we only detach/commit on the transition, not every render cycle.
+    hidden: bool = false,
 
     pub fn create(output: *Output) !*Bar {
         const ctx = Context.get();
@@ -107,6 +110,21 @@ pub const Bar = struct {
         const ctx = Context.get();
         const gpa = ctx.gpa;
         const out = self.output;
+
+        // A fullscreen window owns the whole output. The bar always placeTop()s, so
+        // it would draw over the fullscreen window — hide it instead (mirrors dwl,
+        // where the bar is hidden on a fullscreen monitor). Detach the buffer once
+        // on the transition; an unmapped surface draws nothing.
+        if (fullscreenOn(out)) {
+            if (!self.hidden) {
+                self.wl_surface.attach(null, 0, 0);
+                self.shell.syncNextCommit();
+                self.wl_surface.commit();
+                self.hidden = true;
+            }
+            return;
+        }
+        self.hidden = false;
 
         const w = out.width;
         const h = font.height();
@@ -326,6 +344,16 @@ fn currentOutput() ?*Output {
     if (ctx.focused) |f| return f.output;
     if (ctx.outputs.items.len == 1) return ctx.outputs.items[0];
     return null;
+}
+
+/// Whether a fullscreen window is currently shown on `out`. When true the bar
+/// hides so the fullscreen window can own the whole output.
+fn fullscreenOn(out: *Output) bool {
+    const ctx = Context.get();
+    for (ctx.windows.items) |w| {
+        if (w.output == out and w.fullscreen and w.visible()) return true;
+    }
+    return false;
 }
 
 /// The window whose title the bar shows for `out`: the most-recently-focused

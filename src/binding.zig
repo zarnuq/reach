@@ -189,7 +189,7 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, 'z', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/svfzf" });
     add(xkb, seat, 'w', MOD, .{ .spawn = "kitty --class rmpc rmpc" });
     add(xkb, seat, 'w', MOD_SHIFT, .{ .spawn = "rmpc rescan" });
-    add(xkb, seat, 't', MOD, .{ .spawn = "zen" });
+    add(xkb, seat, 't', MOD, .{ .spawn = "zen-browser" });
     add(xkb, seat, 'b', MOD_SHIFT, .{ .spawn = "kitty -e yazi $HOME/Pictures/bgs" });
     add(xkb, seat, 'b', MOD, .{ .spawn = "awww img \"$(find $HOME/Pictures/bgs -type f \\( -iname '*.jpg' -o -iname '*.png' \\) | shuf -n1)\" --transition-fps 144 --transition-type top --transition-duration 1" });
     add(xkb, seat, 'e', MOD, .{ .spawn = "$HOME/.local/bin/eww.sh open" });

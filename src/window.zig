@@ -362,6 +362,12 @@ pub const Window = struct {
             // gives an output hint, but we just fullscreen on the window's output.
             .fullscreen_requested => {
                 self.fullscreen = true;
+                // A window can request fullscreen before arrange() ever maps it
+                // (e.g. a Proton game that launches straight into fullscreen).
+                // arrange() skips fullscreen windows, so it's the only mapper that
+                // would never run for this window — map it here or render() hides it
+                // forever (visible() requires `mapped`).
+                self.mapped = true;
                 ctx.rwm.manageDirty();
             },
             .exit_fullscreen_requested => {
