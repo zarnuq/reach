@@ -5,10 +5,9 @@
 // gap), never the edges facing the screen, and never a full box around the
 // window. Inactive gutters are left empty.
 //
-// MILESTONE 3a (this file): draw a solid highlight rectangle filling each
-// interior-edge gutter of the focused window. Stage 3b will refine the ends with
-// the half-line-at-junction rule (the highlight extending only halfway into a
-// crossing gutter).
+// We draw a highlight line in each interior-edge gutter of the focused window,
+// applying dwl's half-line-at-junction rule (a line extends only halfway into a
+// crossing gutter) — see focusedRects() for the geometry.
 //
 // Drawing mechanism — no shm needed for solid colors:
 //   * a 1x1 wp_single_pixel_buffer holds the color,

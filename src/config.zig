@@ -1,8 +1,9 @@
 // config.zig — compile-time configuration.
 //
 // dwl-style: edit these values and rebuild. A runtime config format can come
-// later; for now constants keep things simple and zero-overhead. M3 will add the
-// border colors/width here; M4 the bar; M5 the keybindings.
+// later; for now constants keep things simple and zero-overhead. Gaps, focus,
+// monitors, rules, border colors/width, tags, and the bar all live here;
+// keybindings live in binding.zig.
 
 /// Gap (px) between the tiled area and the output edge. 0 = windows extend all
 /// the way to the screen edge (dwl/tmux style — no outer border).
@@ -227,7 +228,7 @@ pub const tags = struct {
 };
 
 // ---------------------------------------------------------------------------
-// M4 — the baked-in status bar (dwlb-style)
+// The baked-in status bar (dwlb-style)
 // ---------------------------------------------------------------------------
 //
 // One bar is drawn at the top of every output. Layout left→right:
@@ -245,8 +246,8 @@ pub const bar = struct {
     /// Draw the bar at the top of the output (false = bottom).
     pub const top = true;
 
-    /// Symbol shown for the current layout. reach has one layout for now
-    /// (master-stack tile), matching dwl's "[]=".
+    /// Symbol shown for the current layout. reach has exactly one layout
+    /// (master-stack tile, by design), matching dwl's "[]=".
     pub const layout_symbol = "[]=";
 
     /// Colors as 0xRRGGBBAA.

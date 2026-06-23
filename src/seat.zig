@@ -1,11 +1,9 @@
 // seat.zig — an input seat (keyboard + pointer group).
 //
-// M2 only needs the seat object so we can drive keyboard focus
-// (`focus_window`). Keybindings/keychords and pointer ops arrive in M5, which is
-// why most events are ignored for now.
-
-const std = @import("std");
-const log = std.log.scoped(.seat);
+// The seat object lets us drive keyboard focus (`focus_window`) and observe the
+// pointer for focus-follows-mouse / click-to-focus. Keybindings (and chords) are
+// registered against the seat here via binding.registerForSeat; the events we
+// don't act on are ignored.
 
 const wayland = @import("wayland");
 const river = wayland.client.river;
@@ -41,10 +39,6 @@ pub const Seat = struct {
                         if (config.sloppy_focus and ctx.focused != w) {
                             ctx.focused = w;
                             ctx.current_output = w.output;
-                            // Diagnostic: confirms river delivers hover events and
-                            // that focus-follows-mouse is firing. Fires only on an
-                            // actual focus change, so it's not per-motion noise.
-                            log.info("sloppy focus -> {s}", .{if (w.title) |t| t else "(window)"});
                             // Focus is applied in the manage cycle; ask for one.
                             ctx.rwm.manageDirty();
                         }

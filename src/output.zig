@@ -1,8 +1,9 @@
 // output.zig — a monitor.
 //
 // Wraps a river_output_v1 and tracks its position + size in the global
-// coordinate space. The layout uses these dimensions; M3 will hang the per-output
-// border surfaces here and M4 the status bar.
+// coordinate space. The layout uses these dimensions; each output also owns its
+// status bar (bar.zig) and the layer-shell handle used to steer new layer
+// surfaces (rofi, notifications) onto the focused monitor.
 
 const std = @import("std");
 const log = std.log.scoped(.output);
@@ -43,7 +44,7 @@ pub const Output = struct {
     // "logical top" (y=0) is physically the bottom of the panel.
     transform: config.Transform = .normal,
 
-    // This output's status bar (M4). null when the bar subsystem is disabled
+    // This output's status bar. null when the bar subsystem is disabled
     // (no wl_shm / font failed to load) or if its surfaces couldn't be created.
     bar: ?*bar.Bar = null,
 
@@ -84,7 +85,6 @@ pub const Output = struct {
             .position => |ev| {
                 self.x = ev.x;
                 self.y = ev.y;
-                log.info("output position: ({d},{d})", .{ self.x, self.y });
             },
             // Resolution. The `mode` arg is ignored for now.
             .dimensions => |ev| {
@@ -144,7 +144,7 @@ fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
         .name => |ev| {
             if (self.name) |n| ctx.gpa.free(n);
             self.name = ctx.gpa.dupeZ(u8, std.mem.span(ev.name)) catch null;
-            log.info("wl_output name = \"{s}\" (config rank {d})", .{ std.mem.span(ev.name), configRank(self) });
+            log.info("output connector: {s}", .{std.mem.span(ev.name)});
             // Inherit the transform from config.monitors so bar.zig and
             // layout.zig can account for outputs where the y-axis is flipped
             // (rotate_180: logical top = physical bottom).
@@ -155,7 +155,6 @@ fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
                 }
             }
             reorder();
-            logOrder();
         },
         else => {}, // geometry/mode/scale/description/done — unused
     }
@@ -185,15 +184,6 @@ fn rankLessThan(_: void, a: *Output, b: *Output) bool {
 pub fn reorder() void {
     const ctx = Context.get();
     std.sort.insertion(*Output, ctx.outputs.items, {}, rankLessThan);
-}
-
-/// Diagnostic: log the current monitor order (index → name) so we can see whether
-/// the config-based sort actually took effect.
-fn logOrder() void {
-    const ctx = Context.get();
-    for (ctx.outputs.items, 0..) |o, i| {
-        log.info("  monitor {d}: {s}", .{ i, o.name orelse "<unnamed>" });
-    }
 }
 
 /// We ignore river_layer_shell_output_v1 events (non_exclusive_area); the bar

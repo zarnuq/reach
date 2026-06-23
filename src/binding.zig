@@ -6,15 +6,16 @@
 // event is always followed by a manage_start, so mutating state in the handler is
 // enough — the layout/render re-runs automatically (no manageDirty needed).
 //
-// This milestone wires up the dwl tag keybinds (mirroring the user's config.h):
+// The full dwl keybind set is wired up in registerForSeat (mirroring the user's
+// config.h). The tag binds are:
 //   MOD+1..9            view tag n
 //   MOD+Ctrl+1..9       toggle tag n in the view
 //   MOD+Shift+sym       move focused window to tag n
 //   MOD+Ctrl+Shift+sym  toggle tag n on the focused window
 //   MOD+0               view all tags
 //   MOD+Shift+0sym      put focused window on all tags
-// where MOD is Super (mod4). The remaining dwl keybinds (spawn, focus, layout, …)
-// arrive at M5 by adding more entries here.
+// where MOD is Super (mod4); the rest (spawn, focus, layout, chords, media, …)
+// follow in the same function.
 
 const std = @import("std");
 const log = std.log.scoped(.binding);

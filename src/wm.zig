@@ -14,7 +14,6 @@ const log = std.log.scoped(.wm);
 
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
-const wp = wayland.client.wp;
 const river = wayland.client.river;
 
 const Context = @import("context.zig");
@@ -27,31 +26,9 @@ const Output = @import("output.zig").Output;
 const Seat = @import("seat.zig").Seat;
 
 /// Initialise the global context and attach the window-manager listener.
-pub fn init(
-    gpa: std.mem.Allocator,
-    registry: *wl.Registry,
-    rwm: *river.WindowManagerV1,
-    xkb_bindings: ?*river.XkbBindingsV1,
-    layer_shell: ?*river.LayerShellV1,
-    wl_compositor: ?*wl.Compositor,
-    wl_subcompositor: ?*wl.Subcompositor,
-    wl_shm: ?*wl.Shm,
-    wp_viewporter: ?*wp.Viewporter,
-    wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1,
-) void {
-    Context.init(
-        gpa,
-        registry,
-        rwm,
-        xkb_bindings,
-        layer_shell,
-        wl_compositor,
-        wl_subcompositor,
-        wl_shm,
-        wp_viewporter,
-        wp_single_pixel_buffer_manager,
-    );
-    rwm.setListener(?*anyopaque, wmListener, null);
+pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, globals: Context.Globals) void {
+    Context.init(gpa, registry, globals);
+    globals.rwm.setListener(?*anyopaque, wmListener, null);
     log.info("window manager initialised; waiting for river events", .{});
 }
 
@@ -60,8 +37,8 @@ pub fn deinit() void {
     // come later if we ever need a graceful in-process restart.
 }
 
-/// The event loop: poll() over the Wayland fd plus the bar's status fifo. M5 adds
-/// a timerfd (key repeat) to this same set.
+/// The event loop: poll() over the Wayland fd plus the status engine's 1s timerfd
+/// and real-time-signal fd (both optional; added to the set only when present).
 pub fn run(display: *wl.Display) !void {
     const ctx = Context.get();
     const wl_fd = display.getFd();

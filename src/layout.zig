@@ -3,8 +3,8 @@
 // Classic dwm/dwl arrangement: `nmaster` windows fill a master column on the
 // left (taking `mfact` of the width when a stack exists); the remaining windows
 // share a stack column on the right. Gaps: `outer_gap` around the whole tiled
-// area, `inner_gap` between adjacent windows (these gutters are where M3's
-// tmux-style borders will be drawn).
+// area, `inner_gap` between adjacent windows (these gutters are where the
+// tmux-style borders in border.zig are drawn).
 //
 // arrange() only sets each window's x/y/width/height (output-relative). The
 // actual protocol calls happen later: manage() proposes the size, render()
@@ -44,8 +44,6 @@ pub fn arrange(out: *Output) void {
     const bar_h = bar.height();
     const top_reserve: i32 = if (config.bar.top) bar_h else 0;
     const oy = config.outer_gap + top_reserve;
-    const log = std.log.scoped(.layout);
-    log.info("arrange {s}: out({d}x{d}@{d},{d}) bar_h={d} oy={d}", .{ out.name orelse "?", out.width, out.height, out.x, out.y, bar_h, oy });
 
     // Usable area inside the outer gap, minus the bar strip.
     const usable_w = out.width - 2 * config.outer_gap;

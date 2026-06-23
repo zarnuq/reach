@@ -29,6 +29,7 @@ const river = wayland.client.river;
 const zwlr = wayland.client.zwlr;
 
 const config = @import("config.zig");
+const Context = @import("context.zig");
 const wm = @import("wm.zig");
 const bar = @import("bar.zig");
 const binding = @import("binding.zig");
@@ -37,33 +38,20 @@ const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
 const Font = @import("render/font.zig");
 
-/// Holds the global objects we bind from the registry. Everything is optional
-/// because globals arrive asynchronously; after the initial roundtrip we check
-/// that the ones we actually require are present.
-const Globals = struct {
-    // Core Wayland globals. Not strictly needed to merely connect, but we bind
-    // them now because borders (M3) and the bar (M4) will create surfaces and
-    // shared-memory buffers from them.
+/// The objects we bind from the registry (definition + per-field docs live on
+/// `Context.Globals`). `rwm` is optional *here* only because globals arrive
+/// asynchronously; we promote it to non-optional after the initial roundtrip
+/// confirms it is present.
+const RegistryGlobals = struct {
     wl_compositor: ?*wl.Compositor = null,
     wl_subcompositor: ?*wl.Subcompositor = null,
     wl_shm: ?*wl.Shm = null,
-
-    // Used by the tmux borders (M3): scale + solid-color buffers.
     wp_viewporter: ?*wp.Viewporter = null,
     wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
-
-    // river globals.
-    //   window_manager — the protocol that drives this whole program (required).
-    //   xkb_bindings   — keyboard bindings (used in M5).
-    //   layer_shell    — surfaces for borders/bar (used in M3/M4).
     rwm: ?*river.WindowManagerV1 = null,
     xkb_bindings: ?*river.XkbBindingsV1 = null,
     layer_shell: ?*river.LayerShellV1 = null,
-
-    // wlr-output-management: lets us apply config.monitors (modes/positions/…).
     output_manager: ?*zwlr.OutputManagerV1 = null,
-
-    // river-input-management: lets us apply keyboard repeat (config.repeat_*).
     input_manager: ?*river.InputManagerV1 = null,
 };
 
@@ -95,8 +83,8 @@ pub fn main() !void {
     //    global; each advertisement fires a `.global` event on our listener. A
     //    single roundtrip is enough to receive the initial batch.
     const registry = try display.getRegistry();
-    var globals = Globals{};
-    registry.setListener(*Globals, registryListener, &globals);
+    var globals = RegistryGlobals{};
+    registry.setListener(*RegistryGlobals, registryListener, &globals);
     if (display.roundtrip() != .SUCCESS) return error.RoundtripFailed;
 
     // Require the one global we cannot live without. If it is missing, either we
@@ -107,7 +95,8 @@ pub fn main() !void {
         return error.MissingWindowManager;
     };
 
-    // Warn (but continue) on the soft dependencies; M1 doesn't use them yet.
+    // Warn (but continue) on the soft dependencies; reach degrades gracefully
+    // without them (no bar, no borders, no keybindings, as noted per-global).
     if (globals.wl_shm == null) log.warn("no wl_shm (needed later for the bar)", .{});
     if (globals.layer_shell == null) log.warn("no river_layer_shell_v1 (needed later for the bar)", .{});
     if (globals.xkb_bindings == null) log.warn("no river_xkb_bindings_v1 (needed later for keybinds)", .{});
@@ -116,23 +105,22 @@ pub fn main() !void {
 
     // 3. Initialise the WM core and run. `init` populates the global context and
     //    attaches the window-manager listener; `run` blocks in the poll loop
-    //    until river tells us to stop.
-    wm.init(
-        gpa,
-        registry,
-        rwm,
-        globals.xkb_bindings,
-        globals.layer_shell,
-        globals.wl_compositor,
-        globals.wl_subcompositor,
-        globals.wl_shm,
-        globals.wp_viewporter,
-        globals.wp_single_pixel_buffer_manager,
-    );
+    //    until river tells us to stop. `rwm` is now known-present, so the Context
+    //    copy takes it non-optional.
+    wm.init(gpa, registry, .{
+        .rwm = rwm,
+        .xkb_bindings = globals.xkb_bindings,
+        .layer_shell = globals.layer_shell,
+        .wl_compositor = globals.wl_compositor,
+        .wl_subcompositor = globals.wl_subcompositor,
+        .wl_shm = globals.wl_shm,
+        .wp_viewporter = globals.wp_viewporter,
+        .wp_single_pixel_buffer_manager = globals.wp_single_pixel_buffer_manager,
+    });
     defer wm.deinit();
 
-    // M4 bar: initialise the font library, load the configured font, and open
-    // the someblocks status fifo. Any failure here just disables the bar (or
+    // Bar: initialise the font library, load the configured font, and start the
+    // in-process status engine. Any failure here just disables the bar (or
     // status); window management still runs.
     Font.initLibrary() catch |err| log.err("fcft init failed: {} — bar disabled", .{err});
     bar.initFont(gpa);
@@ -164,7 +152,7 @@ pub fn main() !void {
 /// Registry listener: binds each advertised global we care about, ignoring the
 /// rest. zig-wayland delivers events as a tagged union; `.global` carries the
 /// numeric name + interface string + version.
-fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *Globals) void {
+fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *RegistryGlobals) void {
     switch (event) {
         .global => |g| {
             // We compare the advertised interface name against each binding's
@@ -192,8 +180,8 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
                 globals.input_manager = registry.bind(g.name, river.InputManagerV1, 1) catch return;
             }
         },
-        // A global went away. We don't bind anything hot-pluggable at M1, so there
-        // is nothing to tear down here yet.
+        // A global went away. We don't track hot-pluggable registry globals, so
+        // there is nothing to tear down here.
         .global_remove => {},
     }
 }

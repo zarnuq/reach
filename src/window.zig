@@ -152,13 +152,6 @@ pub const Window = struct {
             self.rwm.proposeDimensions(0, 0);
             return;
         }
-        log.info("propose {s}: {d}x{d} @ local ({d},{d}), global ({d},{d})", .{
-            self.app_id orelse "?",
-            self.width, self.height,
-            self.x, self.y,
-            (self.output orelse unreachable).x + self.x,
-            (self.output orelse unreachable).y + self.y,
-        });
         self.rwm.proposeDimensions(self.width, self.height);
     }
 
@@ -376,7 +369,7 @@ pub const Window = struct {
             },
 
             // dimensions (actual size), decoration_hint, maximize requests,
-            // pointer move/resize, … → later milestones.
+            // pointer move/resize, … → not handled (move/resize is keyboard-driven).
             else => {},
         }
     }
