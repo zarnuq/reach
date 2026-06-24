@@ -1,24 +1,29 @@
-// config.zig — compile-time configuration.
+// config.zig — configuration: compiled-in DEFAULTS, optionally overlaid at startup.
 //
-// dwl-style: edit these values and rebuild. A runtime config format can come
-// later; for now constants keep things simple and zero-overhead. Gaps, focus,
-// monitors, rules, border colors/width, tags, and the bar all live here;
-// keybindings live in binding.zig.
+// dwl-style values live here, but most are now `pub var` rather than `pub const`:
+// they hold the compiled-in DEFAULT, and `confparse.zig` overlays any field the
+// user set in `config.zon` (see confparse.load, called once at startup before the
+// seat/bar/outputs are configured). With no config file, these defaults are used
+// verbatim — so the binary works out of the box and nothing user-specific is baked
+// into the ELF (important for packaging). Tags and the type definitions below stay
+// `const`: tag count feeds comptime sizing and the types are, well, types.
+// Keybindings live in binding.zig; their defaults are likewise overridable via the
+// `binds` array in config.zon.
 
 /// Gap (px) between the tiled area and the output edge. 0 = windows extend all
 /// the way to the screen edge (dwl/tmux style — no outer border).
-pub const outer_gap: i32 = 0;
+pub var outer_gap: i32 = 0;
 
 /// Gap (px) between adjacent tiled windows — the seam the tmux border line fills.
 /// Keep this equal to `border_thickness` so the border fills the seam and the
 /// vertical/horizontal lines abut at junctions (no cut-off corners). Making it
 /// larger than the line would reopen corner gaps until line-extension is added.
-pub const inner_gap: i32 = 2;
+pub var inner_gap: i32 = 2;
 
 /// Focus follows the mouse (dwl's `sloppyfocus`): moving the pointer onto a
 /// window focuses it and selects its monitor — so the bar highlight and tag keys
 /// track the monitor the mouse is over. false = focus changes only on click.
-pub const sloppy_focus = true;
+pub var sloppy_focus: bool = true;
 
 /// Keyboard auto-repeat (dwl's `repeat_rate` / `repeat_delay`). In river's
 /// non-monolithic split the compositor owns input, so reach applies these to every
@@ -26,8 +31,8 @@ pub const sloppy_focus = true;
 /// than configuring the keyboard directly like dwl does.
 ///   repeat_rate  — repeats per second once repeating starts (0 disables repeat).
 ///   repeat_delay — ms held before repeating begins.
-pub const repeat_rate: i32 = 50;
-pub const repeat_delay: i32 = 300;
+pub var repeat_rate: i32 = 50;
+pub var repeat_delay: i32 = 300;
 
 // ---------------------------------------------------------------------------
 // Environment (dwl `setenv` / setupenv)
@@ -38,54 +43,21 @@ pub const repeat_delay: i32 = 300;
 // reach (autostart, keybinds, runsvdir) all inherit these, fixing services
 // that need WAYLAND_DISPLAY, QT/GTK hints, etc.
 
-pub const env = [_][2][:0]const u8{
-    .{ "PATH","/usr/bin:/usr/sbin:/bin:/sbin:/home/miles/.local/bin:/usr/local/bin:/home/miles/.config/emacs/bin:/nix/var/nix/profiles/default/bin:/home/miles/.nix-profile/bin" },
-    .{ "XDG_CURRENT_DESKTOP",  "river" },
-    .{ "SVDIR",                "/home/miles/.local/sv" },
-    .{ "XDG_SESSION_TYPE",     "wayland" },
-    // WAYLAND_DISPLAY must NOT be set here — river exports the correct socket
-    // name when it spawns reach; hardcoding it breaks children if river chose
-    // a name other than wayland-0.
-    .{ "DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus" },
-
-    .{ "QT_QPA_PLATFORMTHEME", "qt6ct" },
-    .{ "QT_QPA_PLATFORM",      "wayland" },
-    .{ "QT_STYLE_OVERRIDE",    "kvantum" },
-
-    .{ "JAVA_HOME",            "/usr/lib/jvm/java-21-openjdk" },
-    .{ "_JAVA_OPTIONS",        "-Djava.util.prefs.userRoot=/home/miles/.config/java" },
-
-    .{ "XDG_DATA_DIRS",        "/home/miles/.nix-profile/share:/usr/local/share:/usr/share" },
-
-    .{ "CUDA_CACHE_PATH",      "/home/miles/.cache/nv" },
-    .{ "LIBVA_DRIVER_NAME",    "nvidia" },
-    .{ "NVD_BACKEND",          "direct" },
-
-    .{ "GTK2_RC_FILES",        "/home/miles/.config/gtk-2.0/gtkrc" },
-
-    .{ "CARGO_HOME",           "/home/miles/.local/share/cargo" },
-    .{ "RUSTUP_HOME",          "/home/miles/.local/share/rustup" },
-    .{ "GOPATH",               "/home/miles/.local/share/go" },
-    .{ "GNUPGHOME",            "/home/miles/.local/share/gnupg" },
-    .{ "NPM_CONFIG_PREFIX",    "/home/miles/.local/share/npm" },
-    .{ "NPM_CONFIG_CACHE",     "/home/miles/.cache/npm" },
-    .{ "BUN_DIR",              "/home/miles/.local/share/bun" },
-    .{ "WINEPREFIX",           "/home/miles/.local/share/wine" },
-    .{ "MINECRAFT_HOME",       "/home/miles/.local/share/minecraft" },
-    .{ "SQLITE_HISTORY",       "/home/miles/.local/state/sqlite_history" },
-    .{ "CLAUDE_CONFIG_DIR",    "/home/miles/.cache/claude" },
-    .{ "W3M_DIR",              "/home/miles/.local/share/w3m" },
+// Minimal generic default: just identify the session as river/wayland. Anything
+// machine-specific (PATH, toolkit themes, service dirs, …) belongs in config.zon's
+// `env`. Never set WAYLAND_DISPLAY here — river exports the correct socket name to
+// reach, and hardcoding it breaks children if river chose a name other than
+// wayland-0.
+pub var env: []const [2][:0]const u8 = &[_][2][:0]const u8{
+    .{ "XDG_CURRENT_DESKTOP", "river" },
+    .{ "XDG_SESSION_TYPE", "wayland" },
 };
 
 /// Commands run once at startup (dwl's `autostart[]`). Each is passed to
-/// `/bin/sh -c`, so `$HOME`, pipes, and `&` all work. The default mirrors the
-/// user's dwl setup with a single session script that brings up the runit user
-/// services (runsvdir → emacs daemon, mpd, pipewire, …), the notification daemon,
-/// clipboard watchers, wallpaper, eww, etc. The reach script intentionally
-/// OMITS dwlb/someblocks — the status bar is baked into reach itself.
-pub const autostart = [_][:0]const u8{
-    "$HOME/.config/reach/autostart.sh",
-};
+/// `/bin/sh -c`, so `$HOME`, pipes, and `&` all work. Empty by default — set your
+/// session bringup (services, notification daemon, wallpaper, …) in config.zon's
+/// `autostart`, conventionally a single `$HOME/.config/reach/autostart.sh`.
+pub var autostart: []const [:0]const u8 = &[_][:0]const u8{};
 
 // ---------------------------------------------------------------------------
 // Monitor configuration (dwl `monrules`)
@@ -127,34 +99,29 @@ pub const Monitor = struct {
     transform: Transform = .normal,
 };
 
-/// Ported from the user's dwl config.h `monrules` (positions/transforms as-is;
-/// modes selected by resolution rather than dwl's mode index).
-// NOTE: array ORDER defines monitor numbering / focusmon (MOD+,/.) navigation —
-// reach sorts the live outputs into this order (see output.zig reorder). Desired
-// cycle: DP-3 → DP-2 → DP-1, with the laptop panel last.
-pub const monitors = [_]Monitor{
-    .{ .name = "DP-3", .w = 3440, .h = 1440, .x = 0, .y = 0, .transform = .rotate_180 },
-    .{ .name = "DP-2", .w = 3440, .h = 1440, .x = 0, .y = 1440 },
-    .{ .name = "DP-1", .w = 1920, .h = 1080, .refresh = 165000, .x = 3440, .y = 1440, .transform = .rotate_270 },
-    .{ .name = "eDP-1", .w = 1920, .h = 1200 }, // laptop panel, auto-placed
-};
+/// Empty by default: every output keeps the compositor's preferred mode and is
+/// auto-placed. Declare your displays in config.zon's `monitors` (matched by
+/// connector name). NOTE: there, array ORDER defines monitor numbering / focusmon
+/// (Super+,/.) navigation — reach sorts live outputs into that order (output.zig
+/// reorder).
+pub var monitors: []const Monitor = &[_]Monitor{};
 
 /// Number of windows in the master stack.
-pub const nmaster: i32 = 1;
+pub var nmaster: i32 = 1;
 
 /// Fraction of the usable width given to the master column when a stack exists.
-pub const mfact: f32 = 0.55;
+pub var mfact: f32 = 0.55;
 
 /// Default size for a floating window with no size preference of its own, as a
 /// fraction of its output (centered). Fixed-size dialogs keep their own size; this
 /// only applies when the window has no max-size hint. Replaces the old fixed
 /// 640x480, which felt cramped on large monitors.
-pub const float_default_frac_w: f32 = 0.6;
-pub const float_default_frac_h: f32 = 0.65;
+pub var float_default_frac_w: f32 = 0.6;
+pub var float_default_frac_h: f32 = 0.65;
 
 /// Step (px) for keyboard move/resize of a floating window: MOD+arrows move it,
 /// MOD+Shift+arrows grow/shrink it.
-pub const float_step: i32 = 40;
+pub var float_step: i32 = 40;
 
 // ---------------------------------------------------------------------------
 // Window rules (dwl `rules[]`)
@@ -189,25 +156,17 @@ pub const Rule = struct {
     h: f32 = 0,
 };
 
-/// Ported from the user's dwl config.h `rules[]` (all app_id-based; tags use the
-/// same `1 << n` indices). `kitty --class float` → app_id "float", so the MOD+
-/// BackSpace / clipfzf / killfzf floats match the `^float` rule.
-pub const rules = [_]Rule{
-    .{ .app_id = "rmpc", .monitor = 2 }, // DP-1 (index 2 in the monitors table above)
-    .{ .app_id = "zen", .tags = 1 << 2, .switchtotag = true },
-    .{ .app_id = "mpv", .tags = 1 << 0, .switchtotag = true },
-    .{ .app_id = "^steam", .tags = 1 << 4 },
-    .{ .app_id = "^float", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
-    .{ .app_id = "pavucontrol", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
-};
+/// Empty by default. Define your own in config.zon's `rules` (app_id/title based;
+/// tags use `1 << n` indices).
+pub var rules: []const Rule = &[_]Rule{};
 
 /// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Drawn in the
 /// gutters along the focused window's interior (shared) edges.
-pub const border_active: u32 = 0x89b4fa;
+pub var border_active: u32 = 0x89b4fa;
 
 /// Thickness (px) of the highlight line. The line is centered within the gutter,
 /// so this is independent of `inner_gap` (keep it <= inner_gap).
-pub const border_thickness: i32 = 2;
+pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------
 // Tags (dwl-style workspaces)
@@ -240,27 +199,28 @@ pub const tags = struct {
 // the WM and knows the focused output directly (no IPC needed).
 
 pub const bar = struct {
-    /// fontconfig name. fcft resolves this; Nerd Font glyphs work out of the box.
-    pub const font = "JetBrainsMono Nerd Font:size=15";
+    /// fontconfig name. fcft resolves this; a generic monospace is the default so
+    /// the bar renders without assuming a specific (e.g. Nerd) font is installed.
+    pub var font: [:0]const u8 = "monospace:size=12";
 
     /// Draw the bar at the top of the output (false = bottom).
-    pub const top = true;
+    pub var top: bool = true;
 
     /// Symbol shown for the current layout. reach has exactly one layout
     /// (master-stack tile, by design), matching dwl's "[]=".
-    pub const layout_symbol = "[]=";
+    pub var layout_symbol: []const u8 = "[]=";
 
     /// Colors as 0xRRGGBBAA.
     ///   normal_* — unfocused monitors / default text.
     ///   select_* — the focused monitor's title region (the "this monitor is
     ///              active" highlight).
     ///   status_* — the someblocks status text on the right.
-    pub const normal_fg: u32 = 0x7f849cff;
-    pub const normal_bg: u32 = 0x1e1e2eff;
-    pub const select_fg: u32 = 0xffffffff;
-    pub const select_bg: u32 = 0xcba6f7ff;
-    pub const status_fg: u32 = 0x7f849cff;
-    pub const status_bg: u32 = 0x1e1e2eff;
+    pub var normal_fg: u32 = 0x7f849cff;
+    pub var normal_bg: u32 = 0x1e1e2eff;
+    pub var select_fg: u32 = 0xffffffff;
+    pub var select_bg: u32 = 0xcba6f7ff;
+    pub var status_fg: u32 = 0x7f849cff;
+    pub var status_bg: u32 = 0x1e1e2eff;
 
     // -----------------------------------------------------------------------
     // Status blocks (someblocks baked in)
@@ -282,15 +242,12 @@ pub const bar = struct {
     };
 
     /// Separator drawn between adjacent blocks.
-    pub const delim = "|";
+    pub var delim: []const u8 = "|";
 
     /// Ported from the user's ~/.local/src/someblocks/blocks.h.
-    pub const blocks = [_]Block{
-        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/ip.sh", .interval = 30, .signal = 0 },
-        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/audio.sh", .interval = 60, .signal = 1 },
-        .{ .icon = "", .command = "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]\\+%' | head -1", .interval = 1, .signal = 1 },
-        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/mic.sh", .interval = 1, .signal = 2 },
+    /// Minimal default: just a clock. Add your own blocks in config.zon's
+    /// `bar.blocks` (each is icon ++ first line of the command's stdout).
+    pub var blocks: []const Block = &[_]Block{
         .{ .icon = "", .command = "date '+%a %m/%d %I:%M %p'", .interval = 1, .signal = 0 },
-        .{ .icon = "", .command = "/home/miles/.config/reach/blocks/battery.sh", .interval = 30, .signal = 0 },
     };
 };

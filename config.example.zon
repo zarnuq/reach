@@ -1,0 +1,195 @@
+// config.example.zon — reach runtime configuration (optional).
+//
+// Copy to one of (first found wins):
+//   $XDG_CONFIG_HOME/reach/config.zon
+//   ~/.config/reach/config.zon
+//   /etc/reach/config.zon            (system default; ship this from your package)
+//
+// Read ONCE at startup. Every field is optional: delete anything you don't want to
+// change and the compiled-in default (config.zig) is used. This file reproduces
+// the built-in defaults, so with it in place reach behaves exactly as without it —
+// edit from here. For a distro package, trim the machine-specific bits (monitors,
+// env) to taste; binds/blocks reference $HOME so they are user-portable as-is.
+//
+// Syntax is ZON (Zig Object Notation): `.{ ... }` is a struct, `.field = value`,
+// strings in "quotes", enums as `.name`. Colors are 0xRRGGBB (border) or 0xRRGGBBAA
+// (bar). A bind's `key` is "Mod+Mod+...+Keysym": modifiers (case-insensitive
+// Super/Mod/Win, Alt, Ctrl, Shift, Mod3, Mod5) then the xkb keysym NAME, joined by
+// '+'. Letters/digits are themselves ("q", "1"); everything else uses its xkb name
+// ("Return", "space", "comma", "bracketleft", "XF86AudioPlay", "plus"). A chord
+// sub-key normally has no modifier, so just "d".
+.{
+    // --- layout / behavior -------------------------------------------------
+    .outer_gap = 0,
+    .inner_gap = 2,
+    .sloppy_focus = true,
+    .repeat_rate = 50,
+    .repeat_delay = 300,
+    .nmaster = 1,
+    .mfact = 0.55,
+    .float_default_frac_w = 0.6,
+    .float_default_frac_h = 0.65,
+    .float_step = 40,
+
+    // --- tmux-style focused-window border ----------------------------------
+    .border_active = 0x89b4fa,
+    .border_thickness = 2,
+
+    // --- session environment (dwl setupenv) --------------------------------
+    // Applied with setenv() before autostart; NOT through a shell, so $VARS are
+    // NOT expanded here — use absolute paths. Never set WAYLAND_DISPLAY.
+    .env = .{
+        .{ "XDG_CURRENT_DESKTOP", "river" },
+        .{ "XDG_SESSION_TYPE", "wayland" },
+        .{ "QT_QPA_PLATFORM", "wayland" },
+    },
+
+    // --- startup programs (dwl autostart) ----------------------------------
+    // Each is run via /bin/sh -c, so $HOME / pipes / & all work.
+    .autostart = .{
+        "$HOME/.config/reach/autostart.sh",
+    },
+
+    // --- monitors (dwl monrules) -------------------------------------------
+    // Matched by connector name. Array ORDER defines monitor numbering for
+    // focusmon/tagmon and window-rule .monitor indices. transform is one of
+    // .normal .rotate_90 .rotate_180 .rotate_270 .flipped .flipped_90/180/270.
+    .monitors = .{
+        .{ .name = "DP-3", .w = 3440, .h = 1440, .x = 0, .y = 0, .transform = .rotate_180 },
+        .{ .name = "DP-2", .w = 3440, .h = 1440, .x = 0, .y = 1440 },
+        .{ .name = "DP-1", .w = 1920, .h = 1080, .refresh = 165000, .x = 3440, .y = 1440, .transform = .rotate_270 },
+        .{ .name = "eDP-1", .w = 1920, .h = 1200 },
+    },
+
+    // --- window rules (dwl rules) ------------------------------------------
+    // Match app_id/title: "^foo" = starts-with, "foo" = contains. tags is a
+    // 1<<n bitmask. monitor is an index into .monitors above.
+    .rules = .{
+        .{ .app_id = "rmpc", .monitor = 2 },
+        .{ .app_id = "zen", .tags = 4, .switchtotag = true },
+        .{ .app_id = "mpv", .tags = 1, .switchtotag = true },
+        .{ .app_id = "^steam", .tags = 16 },
+        .{ .app_id = "^float", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
+        .{ .app_id = "pavucontrol", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
+    },
+
+    // --- the baked-in status bar -------------------------------------------
+    .bar = .{
+        .font = "JetBrainsMono Nerd Font:size=15",
+        .top = true,
+        .layout_symbol = "[]=",
+        .normal_fg = 0x7f849cff,
+        .normal_bg = 0x1e1e2eff,
+        .select_fg = 0xffffffff,
+        .select_bg = 0xcba6f7ff,
+        .status_fg = 0x7f849cff,
+        .status_bg = 0x1e1e2eff,
+        .delim = "|",
+        // someblocks, in-process. Each block = icon ++ first line of command
+        // stdout; re-run every `interval` s and/or on SIGRTMIN+`signal`.
+        .blocks = .{
+            .{ .icon = "", .command = "$HOME/.config/reach/blocks/ip.sh", .interval = 30, .signal = 0 },
+            .{ .icon = "", .command = "$HOME/.config/reach/blocks/audio.sh", .interval = 60, .signal = 1 },
+            .{ .icon = "", .command = "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]\\+%' | head -1", .interval = 1, .signal = 1 },
+            .{ .icon = "", .command = "$HOME/.config/reach/blocks/mic.sh", .interval = 1, .signal = 2 },
+            .{ .icon = "", .command = "date '+%a %m/%d %I:%M %p'", .interval = 1, .signal = 0 },
+            .{ .icon = "", .command = "$HOME/.config/reach/blocks/battery.sh", .interval = 30, .signal = 0 },
+        },
+    },
+
+    // --- keybindings -------------------------------------------------------
+    // Providing `binds` REPLACES the entire default action/spawn/chord keymap
+    // (dwl-style: your config is the config). The tag binds — Super+1..9 view,
+    // Super+Shift+1..9 move, Super+Ctrl+1..9 toggleview, Super+0 view-all — are
+    // always generated and are NOT listed here. A bind is either a leaf (`.action`)
+    // or a chord leader (`.chord` = list of sub-keys; sub-keys carry no modifier
+    // and nest to any depth). Actions: .view/.toggleview/.tag/.toggletag (u32
+    // mask), .{ .spawn = "cmd" }, .quit, .killclient, .zoom, .togglefloating,
+    // .togglefullscreen, .{ .move = .{ .x=,.y= } }, .{ .resize = ... },
+    // .{ .focusstack = n }, .{ .setmfact = f }, .{ .incnmaster = n },
+    // .{ .focusmon = n }, .{ .tagmon = n }.
+    .binds = .{
+        // launchers
+        .{ .key = "Super+p", .action = .{ .spawn = "swaylock" } },
+        .{ .key = "Super+Tab", .action = .{ .spawn = "kitty" } },
+        .{ .key = "Super+d", .action = .{ .spawn = "emacsclient -c" } },
+        .{ .key = "Super+space", .action = .{ .spawn = "rofi -show drun -show-icons" } },
+        .{ .key = "Super+BackSpace", .action = .{ .spawn = "kitty --class float" } },
+        .{ .key = "Super+v", .action = .{ .spawn = "kitty --class float -e $HOME/.local/bin/clipfzf" } },
+        .{ .key = "Super+x", .action = .{ .spawn = "kitty --class float -e $HOME/.local/bin/killfzf" } },
+        .{ .key = "Super+z", .action = .{ .spawn = "kitty --class float -e $HOME/.local/bin/svfzf" } },
+        .{ .key = "Super+w", .action = .{ .spawn = "kitty --class rmpc rmpc" } },
+        .{ .key = "Super+Shift+w", .action = .{ .spawn = "rmpc rescan" } },
+        .{ .key = "Super+t", .action = .{ .spawn = "zen-browser" } },
+        .{ .key = "Super+Shift+b", .action = .{ .spawn = "kitty -e yazi $HOME/Pictures/bgs" } },
+        .{ .key = "Super+b", .action = .{ .spawn = "awww img \"$(find $HOME/Pictures/bgs -type f \\( -iname '*.jpg' -o -iname '*.png' \\) | shuf -n1)\" --transition-fps 144 --transition-type top --transition-duration 1" } },
+        .{ .key = "Super+e", .action = .{ .spawn = "$HOME/.local/bin/eww.sh open" } },
+        .{ .key = "Super+Shift+e", .action = .{ .spawn = "$HOME/.local/bin/eww.sh close" } },
+
+        // chords (dwl SPAWN2): a leader arms a submap; release Super, then the
+        // sub-key runs and closes it.
+        .{ .key = "Super+r", .chord = .{
+            .{ .key = "d", .action = .{ .spawn = "legcord" } },
+            .{ .key = "b", .action = .{ .spawn = "brave" } },
+            .{ .key = "a", .action = .{ .spawn = "pavucontrol" } },
+            .{ .key = "s", .action = .{ .spawn = "exec steam </dev/null >/dev/null 2>&1" } },
+            .{ .key = "w", .action = .{ .spawn = "$HOME/.local/bin/runbar.sh" } },
+        } },
+        .{ .key = "Super+s", .chord = .{
+            .{ .key = "s", .action = .{ .spawn = "$HOME/.local/bin/screenshot.sh ss && notify-send Screenshot 'Quick capture saved!'" } },
+            .{ .key = "d", .action = .{ .spawn = "$HOME/.local/bin/screenshot.sh section && notify-send Screenshot 'Section saved!'" } },
+            .{ .key = "1", .action = .{ .spawn = "$HOME/.local/bin/screenshot.sh DP-1 && notify-send Screenshot 'Fullscreen saved!'" } },
+            .{ .key = "2", .action = .{ .spawn = "$HOME/.local/bin/screenshot.sh DP-2 && notify-send Screenshot 'Fullscreen saved!'" } },
+            .{ .key = "3", .action = .{ .spawn = "$HOME/.local/bin/screenshot.sh DP-3 && notify-send Screenshot 'Fullscreen saved!'" } },
+        } },
+        .{ .key = "Super+q", .chord = .{
+            .{ .key = "1", .action = .{ .spawn = "easyeffects -l EQ" } },
+            .{ .key = "2", .action = .{ .spawn = "easyeffects -l None" } },
+        } },
+
+        // media / volume / mic
+        .{ .key = "XF86AudioPlay", .action = .{ .spawn = "playerctl -p mpd play-pause" } },
+        .{ .key = "XF86AudioPrev", .action = .{ .spawn = "playerctl -p mpd previous" } },
+        .{ .key = "XF86AudioNext", .action = .{ .spawn = "playerctl -p mpd next" } },
+        .{ .key = "Alt+Up", .action = .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ +5% && kill -35 $(pidof reach)" } },
+        .{ .key = "Alt+Down", .action = .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ -5% && kill -35 $(pidof reach)" } },
+        .{ .key = "Alt+Left", .action = .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ -5% && kill -36 $(pidof reach)" } },
+        .{ .key = "Alt+Right", .action = .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ +5% && kill -36 $(pidof reach)" } },
+        .{ .key = "Alt+End", .action = .{ .spawn = "pactl set-source-mute @DEFAULT_SOURCE@ toggle && kill -36 $(pidof reach)" } },
+        .{ .key = "Alt+bracketleft", .action = .{ .spawn = "$HOME/.local/bin/flip.sh && touch /tmp/update_audio && kill -35 $(pidof reach)" } },
+
+        // brightness / redshift
+        .{ .key = "Super+Alt+Left", .action = .{ .spawn = "$HOME/.local/bin/brightness.sh down" } },
+        .{ .key = "Super+Alt+Right", .action = .{ .spawn = "$HOME/.local/bin/brightness.sh up" } },
+        .{ .key = "Super+Alt+Up", .action = .{ .spawn = "$HOME/.local/bin/redshift.sh" } },
+
+        // window management
+        .{ .key = "Super+Shift+p", .action = .quit },
+        .{ .key = "Super+Shift+q", .action = .killclient },
+        .{ .key = "Super+Return", .action = .zoom },
+        .{ .key = "Super+f", .action = .togglefloating },
+        .{ .key = "Super+Shift+f", .action = .togglefullscreen },
+
+        // floating move (Super+arrows) / resize (Super+Shift+arrows), step = 40
+        .{ .key = "Super+Left", .action = .{ .move = .{ .x = -40 } } },
+        .{ .key = "Super+Right", .action = .{ .move = .{ .x = 40 } } },
+        .{ .key = "Super+Up", .action = .{ .move = .{ .y = -40 } } },
+        .{ .key = "Super+Down", .action = .{ .move = .{ .y = 40 } } },
+        .{ .key = "Super+Shift+Left", .action = .{ .resize = .{ .x = -40 } } },
+        .{ .key = "Super+Shift+Right", .action = .{ .resize = .{ .x = 40 } } },
+        .{ .key = "Super+Shift+Up", .action = .{ .resize = .{ .y = -40 } } },
+        .{ .key = "Super+Shift+Down", .action = .{ .resize = .{ .y = 40 } } },
+
+        // focus / layout
+        .{ .key = "Super+j", .action = .{ .focusstack = 1 } },
+        .{ .key = "Super+k", .action = .{ .focusstack = -1 } },
+        .{ .key = "Super+h", .action = .{ .setmfact = -0.05 } },
+        .{ .key = "Super+l", .action = .{ .setmfact = 0.05 } },
+        .{ .key = "Super+m", .action = .{ .incnmaster = -1 } },
+        .{ .key = "Super+n", .action = .{ .incnmaster = 1 } },
+        .{ .key = "Super+comma", .action = .{ .focusmon = -1 } },
+        .{ .key = "Super+period", .action = .{ .focusmon = 1 } },
+        .{ .key = "Super+Shift+comma", .action = .{ .tagmon = -1 } },
+        .{ .key = "Super+Shift+period", .action = .{ .tagmon = 1 } },
+    },
+}

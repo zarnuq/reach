@@ -163,7 +163,7 @@ fn configListener(conf: *zwlr.OutputConfigurationV1, event: zwlr.OutputConfigura
 /// The config.monitors entry whose name equals `name`, or null.
 fn matchMonitor(name: ?[:0]const u8) ?*const config.Monitor {
     const n = name orelse return null;
-    for (&config.monitors) |*mon| {
+    for (config.monitors) |*mon| {
         if (std.mem.eql(u8, mon.name, n)) return mon;
     }
     return null;

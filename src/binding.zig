@@ -24,10 +24,26 @@ const wayland = @import("wayland");
 const river = wayland.client.river;
 
 const config = @import("config.zig");
+const confparse = @import("confparse.zig");
 const Context = @import("context.zig");
 const Seat = @import("seat.zig").Seat;
 const Output = @import("output.zig").Output;
 const Window = @import("window.zig").Window;
+
+/// Resolve an xkb keysym NAME ("Return", "q", "XF86AudioPlay", "1") to its keysym
+/// code, for binds loaded from config.zon. Case-sensitive (XKB_KEYSYM_NO_FLAGS),
+/// matching xkbcommon's own naming: "Return" not "return", lowercase "q" for the Q
+/// key (Shift binds register the BASE keysym + MOD_SHIFT — see the no_translate
+/// note in registerForSeat). Returns null for an unknown name.
+extern fn xkb_keysym_from_name(name: [*:0]const u8, flags: u32) u32;
+fn resolveKeysym(name: []const u8) ?u32 {
+    var buf: [64]u8 = undefined;
+    if (name.len == 0 or name.len >= buf.len) return null;
+    @memcpy(buf[0..name.len], name);
+    buf[name.len] = 0;
+    const ks = xkb_keysym_from_name(buf[0..name.len :0].ptr, 0);
+    return if (ks == 0) null else ks; // 0 == XKB_KEY_NoSymbol
+}
 
 /// MOD is Super/logo (mod4), matching dwl's `#define MOD WLR_MODIFIER_LOGO`.
 const Mods = river.SeatV1.Modifiers;
@@ -179,68 +195,133 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, '0', MOD, .{ .view = ~@as(u32, 0) });
     add(xkb, seat, '0', MOD_SHIFT, .{ .tag = ~@as(u32, 0) });
 
-    // Spawn - all with MOD to avoid conflicts
-    add(xkb, seat, 'p', MOD, .{ .spawn = "swaylock" });
-    add(xkb, seat, XKB_KEY_Tab, MOD, .{ .spawn = "kitty" });
-    add(xkb, seat, 'd', MOD, .{ .spawn = "emacsclient -c" });
-    add(xkb, seat, XKB_KEY_space, MOD, .{ .spawn = "rofi -show drun -show-icons" });
-    add(xkb, seat, XKB_KEY_BackSpace, MOD, .{ .spawn = "kitty --class float" });
-    add(xkb, seat, 'v', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/clipfzf" });
-    add(xkb, seat, 'x', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/killfzf" });
-    add(xkb, seat, 'z', MOD, .{ .spawn = "kitty --class float -e $HOME/.local/bin/svfzf" });
-    add(xkb, seat, 'w', MOD, .{ .spawn = "kitty --class rmpc rmpc" });
-    add(xkb, seat, 'w', MOD_SHIFT, .{ .spawn = "rmpc rescan" });
-    add(xkb, seat, 't', MOD, .{ .spawn = "zen-browser" });
-    add(xkb, seat, 'b', MOD_SHIFT, .{ .spawn = "kitty -e yazi $HOME/Pictures/bgs" });
-    add(xkb, seat, 'b', MOD, .{ .spawn = "awww img \"$(find $HOME/Pictures/bgs -type f \\( -iname '*.jpg' -o -iname '*.png' \\) | shuf -n1)\" --transition-fps 144 --transition-type top --transition-duration 1" });
-    add(xkb, seat, 'e', MOD, .{ .spawn = "$HOME/.local/bin/eww.sh open" });
-    add(xkb, seat, 'e', MOD_SHIFT, .{ .spawn = "$HOME/.local/bin/eww.sh close" });
-
-    // Chords (dwl SPAWN2 / multi-key Keychords). A leader (MOD+r / MOD+s / MOD+q)
-    // arms a submap; pressing one of its sub-keys runs that action and closes the
-    // submap, while any other key aborts it (ate_unbound_key). The sub-keys carry
-    // NO modifier, exactly like dwl's `{0, key}`, and are inert until their leader
-    // fires — so they never interfere with normal typing. These mirror the user's
-    // config (all 2 keys), but the machinery nests to any depth: use `addSubChord`
-    // to make a sub-key open a further submap (3-, 4-, 5-key chords, etc.).
-    {
-        // MOD+r → run/launch
-        const r = addChord(xkb, seat, 'r', MOD);
-        addSub(r, xkb, seat, 'd', .{}, .{ .spawn = "legcord" });
-        addSub(r, xkb, seat, 'b', .{}, .{ .spawn = "brave" });
-        addSub(r, xkb, seat, 'a', .{}, .{ .spawn = "pavucontrol" });
-        addSub(r, xkb, seat, 's', .{}, .{ .spawn = "exec steam </dev/null >/dev/null 2>&1" });
-        addSub(r, xkb, seat, 'w', .{}, .{ .spawn = "$HOME/.local/bin/runbar.sh" });
-
-        // MOD+s → screenshots
-        const s = addChord(xkb, seat, 's', MOD);
-        addSub(s, xkb, seat, 's', .{}, .{ .spawn = "$HOME/.local/bin/screenshot.sh ss && notify-send Screenshot 'Quick capture saved!'" });
-        addSub(s, xkb, seat, 'd', .{}, .{ .spawn = "$HOME/.local/bin/screenshot.sh section && notify-send Screenshot 'Section saved!'" });
-        addSub(s, xkb, seat, '1', .{}, .{ .spawn = "$HOME/.local/bin/screenshot.sh DP-1 && notify-send Screenshot 'Fullscreen saved!'" });
-        addSub(s, xkb, seat, '2', .{}, .{ .spawn = "$HOME/.local/bin/screenshot.sh DP-2 && notify-send Screenshot 'Fullscreen saved!'" });
-        addSub(s, xkb, seat, '3', .{}, .{ .spawn = "$HOME/.local/bin/screenshot.sh DP-3 && notify-send Screenshot 'Fullscreen saved!'" });
-
-        // MOD+q → easyeffects presets
-        const q = addChord(xkb, seat, 'q', MOD);
-        addSub(q, xkb, seat, '1', .{}, .{ .spawn = "easyeffects -l EQ" });
-        addSub(q, xkb, seat, '2', .{}, .{ .spawn = "easyeffects -l None" });
+    // The action/spawn/chord binds: if config.zon supplied a `binds` array it FULLY
+    // replaces the compiled-in keymap (dwl-style — your config is the config); the
+    // tag binds above are always generated. With no file binds, the built-in
+    // defaults below are used verbatim.
+    if (confparse.binds) |specs| {
+        for (specs) |spec| registerSpecBind(xkb, seat, spec);
+    } else {
+        registerDefaultBinds(xkb, seat);
     }
+}
 
-    // Media controls
-    add(xkb, seat, XKB_KEY_XF86AudioPlay, .{}, .{ .spawn = "playerctl -p mpd play-pause" });
-    add(xkb, seat, XKB_KEY_XF86AudioPrev, .{}, .{ .spawn = "playerctl -p mpd previous" });
-    add(xkb, seat, XKB_KEY_XF86AudioNext, .{}, .{ .spawn = "playerctl -p mpd next" });
-    add(xkb, seat, XKB_KEY_Up, MOD_ALT, .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ +5% && kill -35 $(pidof reach)" });
-    add(xkb, seat, XKB_KEY_Down, MOD_ALT, .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ -5% && kill -35 $(pidof reach)" });
-    add(xkb, seat, XKB_KEY_Left, MOD_ALT, .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ -5% && kill -36 $(pidof reach)" });
-    add(xkb, seat, XKB_KEY_Right, MOD_ALT, .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ +5% && kill -36 $(pidof reach)" });
-    add(xkb, seat, 0xff57, MOD_ALT, .{ .spawn = "pactl set-source-mute @DEFAULT_SOURCE@ toggle && kill -36 $(pidof reach)" }); // End
-    add(xkb, seat, '[', MOD_ALT, .{ .spawn = "$HOME/.local/bin/flip.sh && touch /tmp/update_audio && kill -35 $(pidof reach)" });
+/// Register one file-driven bind (and, recursively, its chord sub-tree).
+fn registerSpecBind(xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeySpec) void {
+    const kc = parseKey(spec.key) orelse return; // parseKey logs the reason
+    if (spec.chord.len != 0) {
+        const chord = addChord(xkb, seat, kc.keysym, kc.mods);
+        for (spec.chord) |sub| registerSpecSub(chord, xkb, seat, sub);
+    } else if (spec.action) |a| {
+        add(xkb, seat, kc.keysym, kc.mods, toAction(a));
+    } else {
+        log.warn("bind '{s}': neither action nor chord — skipped", .{spec.key});
+    }
+}
 
-    // Brightness
-    add(xkb, seat, XKB_KEY_Left, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = "$HOME/.local/bin/brightness.sh down" });
-    add(xkb, seat, XKB_KEY_Right, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = "$HOME/.local/bin/brightness.sh up" });
-    add(xkb, seat, XKB_KEY_Up, Mods{ .mod4 = true, .mod1 = true }, .{ .spawn = "$HOME/.local/bin/redshift.sh" });
+/// Register a sub-key of a chord from its spec (recurses for nested chords).
+fn registerSpecSub(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeySpec) void {
+    const kc = parseKey(spec.key) orelse return;
+    if (spec.chord.len != 0) {
+        const child = addSubChord(chord, xkb, seat, kc.keysym, kc.mods);
+        for (spec.chord) |sub| registerSpecSub(child, xkb, seat, sub);
+    } else if (spec.action) |a| {
+        addSub(chord, xkb, seat, kc.keysym, kc.mods, toAction(a));
+    }
+}
+
+/// A parsed key combo: the river modifier mask plus the resolved keysym code.
+const KeyCombo = struct { mods: Mods, keysym: u32 };
+
+/// Parse a config.zon `key` string ("Super+Shift+q", "Alt+Up", "XF86AudioPlay",
+/// "d") into modifiers + keysym. Tokens are split on '+'; the LAST token is the
+/// xkb keysym name, the rest are modifiers. Whitespace around tokens is ignored.
+/// Returns null (and logs) on an unknown modifier or keysym — note '+' as the key
+/// itself must be written by name ("plus"), since '+' is the separator.
+fn parseKey(spec: []const u8) ?KeyCombo {
+    const s = std.mem.trim(u8, spec, " \t");
+    if (s.len == 0) {
+        log.warn("bind: empty key string — skipped", .{});
+        return null;
+    }
+    var mods: Mods = .{};
+    const key_name = name: {
+        // Last '+' separates the modifier list from the keysym name. No '+' at all
+        // ⇒ the whole string is the keysym (a bare sub-key like "d").
+        const cut = std.mem.lastIndexOfScalar(u8, s, '+') orelse break :name s;
+        var it = std.mem.splitScalar(u8, s[0..cut], '+');
+        while (it.next()) |tok| {
+            const m = std.mem.trim(u8, tok, " \t");
+            if (m.len == 0) continue;
+            if (!applyMod(&mods, m)) {
+                log.warn("bind '{s}': unknown modifier '{s}' — skipped", .{ spec, m });
+                return null;
+            }
+        }
+        break :name std.mem.trim(u8, s[cut + 1 ..], " \t");
+    };
+    const ks = resolveKeysym(key_name) orelse {
+        log.warn("bind '{s}': unknown keysym '{s}' — skipped", .{ spec, key_name });
+        return null;
+    };
+    return .{ .mods = mods, .keysym = ks };
+}
+
+/// Set the river modifier bit for a (case-insensitive) alias. false = unknown name.
+fn applyMod(mods: *Mods, name: []const u8) bool {
+    const eq = std.ascii.eqlIgnoreCase;
+    if (eq(name, "super") or eq(name, "mod") or eq(name, "mod4") or
+        eq(name, "logo") or eq(name, "win") or eq(name, "meta"))
+    {
+        mods.mod4 = true;
+    } else if (eq(name, "alt") or eq(name, "mod1")) {
+        mods.mod1 = true;
+    } else if (eq(name, "ctrl") or eq(name, "control")) {
+        mods.ctrl = true;
+    } else if (eq(name, "shift")) {
+        mods.shift = true;
+    } else if (eq(name, "mod3")) {
+        mods.mod3 = true;
+    } else if (eq(name, "mod5")) {
+        mods.mod5 = true;
+    } else return false;
+    return true;
+}
+
+/// confparse.ActionSpec → the real Action union (chords excluded; they come in
+/// structurally via KeySpec.chord, not as an action).
+fn toAction(a: confparse.ActionSpec) Action {
+    return switch (a) {
+        .view => |v| .{ .view = v },
+        .toggleview => |v| .{ .toggleview = v },
+        .tag => |v| .{ .tag = v },
+        .toggletag => |v| .{ .toggletag = v },
+        .spawn => |v| .{ .spawn = v },
+        .quit => .quit,
+        .killclient => .killclient,
+        .zoom => .zoom,
+        .togglefloating => .togglefloating,
+        .togglefullscreen => .togglefullscreen,
+        .move => |d| .{ .move = .{ .x = d.x, .y = d.y } },
+        .resize => |d| .{ .resize = .{ .x = d.x, .y = d.y } },
+        .focusstack => |v| .{ .focusstack = v },
+        .setmfact => |v| .{ .setmfact = v },
+        .incnmaster => |v| .{ .incnmaster = v },
+        .focusmon => |v| .{ .focusmon = v },
+        .tagmon => |v| .{ .tagmon = v },
+    };
+}
+
+/// The compiled-in fallback keymap, used only when config.zon supplies no `binds`.
+/// Deliberately MINIMAL and generic — a terminal plus core window management, with
+/// no references to specific apps — so a bare install (or zero-config run from the
+/// repo) is usable out of the box. The full personal keymap lives in
+/// `config.example.zon`, not here. Tag binds are generated separately in
+/// registerForSeat and are always present.
+fn registerDefaultBinds(xkb: *river.XkbBindingsV1, seat: *Seat) void {
+    // Terminal: dwl's Super+Shift+Return. Respect $TERMINAL, fall back to foot (a
+    // light Wayland-native terminal); harmless no-op if neither is installed.
+    add(xkb, seat, XKB_KEY_Return, MOD_SHIFT, .{ .spawn = "${TERMINAL:-foot}" });
 
     // Window management
     add(xkb, seat, 'p', MOD_SHIFT, .quit);
@@ -249,19 +330,7 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, 'f', MOD, .togglefloating);
     add(xkb, seat, 'f', MOD_SHIFT, .togglefullscreen);
 
-    // Floating move/resize (keyboard). MOD+arrows move the focused float; MOD+Shift
-    // +arrows grow/shrink it. The step lives in config.float_step.
-    const step = config.float_step;
-    add(xkb, seat, XKB_KEY_Left, MOD, .{ .move = .{ .x = -step } });
-    add(xkb, seat, XKB_KEY_Right, MOD, .{ .move = .{ .x = step } });
-    add(xkb, seat, XKB_KEY_Up, MOD, .{ .move = .{ .y = -step } });
-    add(xkb, seat, XKB_KEY_Down, MOD, .{ .move = .{ .y = step } });
-    add(xkb, seat, XKB_KEY_Left, MOD_SHIFT, .{ .resize = .{ .x = -step } });
-    add(xkb, seat, XKB_KEY_Right, MOD_SHIFT, .{ .resize = .{ .x = step } });
-    add(xkb, seat, XKB_KEY_Up, MOD_SHIFT, .{ .resize = .{ .y = -step } });
-    add(xkb, seat, XKB_KEY_Down, MOD_SHIFT, .{ .resize = .{ .y = step } });
-
-    // Focus/layout
+    // Focus / layout
     add(xkb, seat, 'j', MOD, .{ .focusstack = 1 });
     add(xkb, seat, 'k', MOD, .{ .focusstack = -1 });
     add(xkb, seat, 'h', MOD, .{ .setmfact = -0.05 });
@@ -272,7 +341,6 @@ pub fn registerForSeat(seat: *Seat) void {
     add(xkb, seat, '.', MOD, .{ .focusmon = 1 });
     add(xkb, seat, ',', MOD_SHIFT, .{ .tagmon = -1 });
     add(xkb, seat, '.', MOD_SHIFT, .{ .tagmon = 1 });
-
 }
 
 /// Enable any newly-created bindings. Must be called from a manage sequence.
@@ -497,7 +565,15 @@ fn execute(action: Action) void {
         // Arm a two-key chord submap.
         .enter_submap => |chord| requestSubmapEnter(chord),
         // Window management
-        .quit => ctx.running = false,
+        .quit => {
+            ctx.running = false;
+            // reach is launched as river's `-c` startup command, so river is
+            // our parent process. Stopping the poll loop only exits reach (the
+            // WM client) and would leave river running with no window manager —
+            // an "orphaned" compositor. Signal the parent so river quits too,
+            // matching dwl's monolithic quit where compositor and WM are one.
+            _ = std.os.linux.kill(std.os.linux.getppid(), std.os.linux.SIG.TERM);
+        },
         .killclient => if (ctx.focused) |f| f.rwm.close(),
         .zoom => {
             if (ctx.focused) |f| promoteToMaster(f);

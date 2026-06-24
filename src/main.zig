@@ -29,6 +29,7 @@ const river = wayland.client.river;
 const zwlr = wayland.client.zwlr;
 
 const config = @import("config.zig");
+const confparse = @import("confparse.zig");
 const Context = @import("context.zig");
 const wm = @import("wm.zig");
 const bar = @import("bar.zig");
@@ -73,6 +74,12 @@ pub fn main() !void {
     const display = try wl.Display.connect(null);
     defer display.disconnect();
     log.info("connected to wayland display", .{});
+
+    // Load the optional runtime config (config.zon) and overlay it onto the
+    // compiled-in defaults BEFORE anything reads them — env, monitors, rules,
+    // binds, bar and blocks are all consumed from here on. No file → defaults
+    // stand; a bad file → defaults stand and we log why (never bricks the session).
+    confparse.load(gpa);
 
     // Export session environment variables (dwl setupenv). Done immediately
     // after connecting so that every child process — autostart, keybinds,

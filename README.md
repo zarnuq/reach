@@ -70,15 +70,45 @@ run river with `WLR_RENDERER=pixman` (NVIDIA/EGL fails under the nix setup).
 
 ## Configuration
 
-Configuration is **compile-time**, dwl-style: edit `src/config.zig` (and
-`src/binding.zig` for keybindings) and rebuild. `config.zig` covers gaps, sloppy
-focus, keyboard repeat, session env, autostart, monitor rules, master-stack
-defaults (`nmaster`/`mfact`), float defaults, window rules, border color/width,
-tags, and the bar (font, colors, status blocks).
+reach has **compiled-in defaults** (`src/config.zig`) and reads an **optional
+`config.zon`** at startup, overlaying any field it sets on top of those defaults.
+With no config file the defaults are used — the binary runs out of the box and
+nothing user- or machine-specific is baked into it.
+
+Lookup order, first found wins:
+
+```
+$XDG_CONFIG_HOME/reach/config.zon
+~/.config/reach/config.zon
+/etc/reach/config.zon
+```
+
+The file is [ZON](https://ziglang.org/documentation/master/#Zon) (Zig Object
+Notation), parsed straight into reach's config types via `std.zon`. **Every field
+is optional** — a config only needs to mention what it overrides.
+[`config.example.zon`](config.example.zon) documents the full schema and
+reproduces the defaults, so it is a working starting point.
+
+Configurable: gaps, sloppy focus, keyboard repeat, session env, autostart,
+monitors (mode/position/transform/scale, matched by connector name), window rules,
+master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width, the
+bar (font, colors, status blocks), and the full keymap.
+
+The config is read **once at startup** (no live reload, by design). A malformed
+file is reported with a line/column error and the defaults are kept, so a bad edit
+never breaks the running session.
 
 ### Keybindings
 
-`MOD` = Super (mod4). Defined in `src/binding.zig`.
+`MOD` = Super (mod4). The tag and window-management binds below are intrinsic
+defaults; the **complete keymap — including launcher/spawn binds and chords — is
+defined in `binds` in `config.zon`** and, if present, fully replaces the default
+action keymap (the tag binds are always generated). Each bind's `key` is a combo
+string — modifiers then the xkb keysym name, joined by `+`, e.g. `"Super+Shift+q"`,
+`"Alt+Up"`, `"XF86AudioPlay"`; a chord sub-key with no modifier is just `"d"`.
+Modifier aliases (case-insensitive): `Super`/`Mod`/`Win`, `Alt`, `Ctrl`, `Shift`,
+`Mod3`, `Mod5`. Keysyms are xkb names (`"Return"`, `"space"`, `"comma"`, `"plus"`;
+letters/digits are themselves).
 
 **Tags**
 
@@ -106,33 +136,26 @@ tags, and the bar (font, colors, status blocks).
 | `MOD+,` / `MOD+.` | focus previous / next monitor |
 | `MOD+Shift+,` / `MOD+Shift+.` | send window to previous / next monitor |
 | `MOD+Shift+q` | kill focused client |
-| `MOD+Shift+p` | quit reach |
+| `MOD+Shift+p` | quit reach (and the river session) |
 
-**Spawn** (selection)
+**Spawn & chords.** Launcher bindings and multi-key chords are user-defined in
+`config.zon`. A bind maps a keysym + modifiers to an action; a *chord* leader arms
+a submap whose sub-keys (carrying no modifier) resolve on the next press, nesting
+to arbitrary depth. The available actions are:
 
-| Bind | Command |
-|------|---------|
-| `MOD+Tab` | kitty |
-| `MOD+Space` | rofi (drun) |
-| `MOD+d` | emacsclient |
-| `MOD+t` | zen-browser |
-| `MOD+p` | swaylock |
-| `MOD+BackSpace` | floating kitty |
-| `MOD+v` / `MOD+x` / `MOD+z` | clipfzf / killfzf / svfzf |
-
-**Chords** (leader arms a submap; release Super, then press the sub-key)
-
-- `MOD+r` → run/launch (`d` legcord, `b` brave, `a` pavucontrol, `s` steam, `w` runbar)
-- `MOD+s` → screenshots (`s` quick, `d` section, `1`/`2`/`3` per-display)
-- `MOD+q` → easyeffects presets (`1` EQ, `2` None)
-
-Plus media keys, `MOD+Alt+arrows` for volume/mic, brightness, and redshift.
+- `spawn` — run a shell command
+- `view` / `toggleview` / `tag` / `toggletag` — tag (workspace) operations
+- `zoom`, `killclient`, `quit`
+- `togglefloating`, `togglefullscreen`
+- `move` / `resize` — keyboard move/resize of a floating window
+- `focusstack`, `setmfact`, `incnmaster`
+- `focusmon`, `tagmon`
 
 ## Environment
 
-Targets **Gentoo Linux + runit (no systemd)**. Session services come up via
-`runsvdir ~/.local/sv` from the autostart script. This Zig 0.16 has a gutted
-`std.posix`, so reach uses `std.os.linux.*` / `std.c.*` syscalls directly. reach
-is launched through the system loader, so `main.zig` calls
-`prctl(PR_SET_NAME, "reach")` to fix `/proc/self/comm` (and make `pidof reach`
-work).
+Developed on **Gentoo Linux without systemd** (the autostart command, set in
+`config.zon`, is where you bring up session services). reach links libc and, on
+Zig 0.16 whose `std.posix` is gutted, calls `std.os.linux.*` / `std.c.*` syscalls
+directly. Because it is launched through the system dynamic loader, `main.zig`
+calls `prctl(PR_SET_NAME, "reach")` to fix `/proc/self/comm` (and make
+`pidof reach` work).

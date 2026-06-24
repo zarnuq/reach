@@ -33,8 +33,17 @@ extern fn fgets(buf: [*]u8, n: c_int, stream: *FILE) ?[*]u8;
 const SIGRTMIN = 34;
 const SIGRTMAX = 64;
 
-const N = config.bar.blocks.len;
+// Blocks come from `config.bar.blocks`, which is now a runtime slice (it can be
+// overlaid from config.zon), so the per-block caches are sized to a compile-time
+// MAX_BLOCKS ceiling and we iterate over the live count. A config with more than
+// MAX_BLOCKS blocks simply has the surplus ignored.
+const MAX_BLOCKS = 32;
 const CMDLEN = 256; // max bytes kept per block (icon + line)
+
+/// Number of active blocks this run (clamped to the cache capacity).
+inline fn nblocks() usize {
+    return @min(config.bar.blocks.len, MAX_BLOCKS);
+}
 
 /// Composed status line; bar.zig reads this.
 pub var text_buf: [4096]u8 = undefined;
@@ -45,8 +54,8 @@ pub var timer_fd: ?i32 = null;
 pub var signal_fd: ?i32 = null;
 
 // Per-block cached output (icon + first line, no delimiter) and its length.
-var out_buf: [N][CMDLEN]u8 = undefined;
-var out_len: [N]usize = [_]usize{0} ** N;
+var out_buf: [MAX_BLOCKS][CMDLEN]u8 = undefined;
+var out_len: [MAX_BLOCKS]usize = [_]usize{0} ** MAX_BLOCKS;
 var clock: u64 = 0;
 
 pub fn text() []const u8 {
@@ -55,7 +64,7 @@ pub fn text() []const u8 {
 
 /// Run every block once, then arm the 1s timer and the RT-signal fd.
 pub fn start() void {
-    for (0..N) |i| runBlock(i);
+    for (0..nblocks()) |i| runBlock(i);
     compose();
 
     // 1-second repeating timer.
@@ -96,7 +105,7 @@ pub fn onTimer() bool {
     clock += 1;
 
     var ran = false;
-    for (0..N) |i| {
+    for (0..nblocks()) |i| {
         const b = config.bar.blocks[i];
         if (b.interval != 0 and clock % b.interval == 0) {
             runBlock(i);
@@ -120,7 +129,7 @@ pub fn onSignal() bool {
         if (n != @sizeOf(linux.signalfd_siginfo)) break;
         if (info.signo < SIGRTMIN) continue;
         const want: u8 = @intCast(info.signo - SIGRTMIN);
-        for (0..N) |i| {
+        for (0..nblocks()) |i| {
             if (config.bar.blocks[i].signal == want) {
                 runBlock(i);
                 ran = true;
@@ -182,7 +191,7 @@ fn runBlock(i: usize) void {
 fn compose() void {
     var n: usize = 0;
     var first = true;
-    for (0..N) |i| {
+    for (0..nblocks()) |i| {
         if (out_len[i] == 0) continue;
         if (!first) {
             for (config.bar.delim) |c| {

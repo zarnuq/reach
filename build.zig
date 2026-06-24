@@ -110,7 +110,9 @@ pub fn build(b: *std.Build) void {
     // via pkg-config inside the Nix dev shell.
     exe.root_module.linkSystemLibrary("pixman-1", .{});
     exe.root_module.linkSystemLibrary("fcft", .{});
-    // TODO(M5 keychords): exe.root_module.linkSystemLibrary("xkbcommon", .{});
+    // xkbcommon: resolve xkb keysym NAMES from config.zon binds ("Return", "q",
+    // "XF86AudioPlay", …) into keysym codes via xkb_keysym_from_name (binding.zig).
+    exe.root_module.linkSystemLibrary("xkbcommon", .{});
 
     // `zig build` installs this into zig-out/bin/reach.
     b.installArtifact(exe);
