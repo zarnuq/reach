@@ -8,12 +8,10 @@ river 0.4.x is a *non-monolithic* compositor: river is **only** the compositor
 (it renders, handles input, talks to DRM/the GPU). The window manager is a
 **separate client process** — this one — that speaks the
 `river-window-management-v1` protocol and decides layout, focus, borders, and the
-bar. (Contrast dwl, where compositor and WM are one binary.) reach is modeled
-closely on the author's dwl `config.h`.
+bar. (Contrast dwl, where compositor and WM are one binary.) reach follows dwl's
+design closely, including a dwl `config.h`-style configuration model.
 
-## Status
-
-Feature-complete versus the author's dwl setup:
+## Features
 
 - **Master-stack tiling** — the only layout (by design; no monocle/floating
   layout modes).
@@ -35,8 +33,8 @@ Feature-complete versus the author's dwl setup:
 - **Autostart**, **cursor warp**, **focus-follows-mouse** (sloppy focus), and
   **session env** (`setenv` before autostart).
 
-Not ported (optional): mouse move/resize/float (MOD+drag), cursor theme, bar tag
-clicks.
+Not implemented (optional): mouse move/resize/float (MOD+drag), cursor theme, bar
+tag clicks.
 
 See `CLAUDE.md` for the full architecture notes, gotchas, and the source map.
 
@@ -66,7 +64,8 @@ itself, so reach is started via river's `-c`:
 
 `run.sh` launches **both** river and reach via the system dynamic loader because
 they are nix-zig binaries with system sonames. To test rendering without the GPU,
-run river with `WLR_RENDERER=pixman` (NVIDIA/EGL fails under the nix setup).
+run river with `WLR_RENDERER=pixman` (useful where hardware EGL/GPU acceleration
+is unavailable).
 
 ## Configuration
 
@@ -97,6 +96,18 @@ bar (font, colors, status blocks), and the full keymap.
 The config is read **once at startup** (no live reload, by design). A malformed
 file is reported with a line/column error and the defaults are kept, so a bad edit
 never breaks the running session.
+
+> **Monitor numbering and external clients.** reach's config-ordered monitor
+> numbering (used by `focusmon`/`tagmon` and window-rule `monitor` indices) is
+> **internal to reach** — it does *not* change the order river advertises
+> `wl_output` globals to other clients. So an external bar/widget client (eww,
+> waybar, …) that targets a monitor by **index** is at the mercy of river's
+> advertisement order, not reach's. That order is also perturbed when reach
+> applies the `monitors` config: changing an output's position/transform/mode via
+> `zwlr_output_manager_v1` can re-advertise it, shifting every client's indices.
+> **Target external widgets by connector name** (e.g. eww's `--screen DP-2`)
+> rather than a numeric index, so placement is stable regardless of enumeration
+> order.
 
 ### Keybindings
 
@@ -153,9 +164,10 @@ to arbitrary depth. The available actions are:
 
 ## Environment
 
-Developed on **Gentoo Linux without systemd** (the autostart command, set in
-`config.zon`, is where you bring up session services). reach links libc and, on
-Zig 0.16 whose `std.posix` is gutted, calls `std.os.linux.*` / `std.c.*` syscalls
-directly. Because it is launched through the system dynamic loader, `main.zig`
-calls `prctl(PR_SET_NAME, "reach")` to fix `/proc/self/comm` (and make
-`pidof reach` work).
+reach makes no assumption about an init system or session/login manager: the
+autostart command set in `config.zon` is where session services are brought up,
+so it works with or without systemd. It links libc and, on Zig 0.16 whose
+`std.posix` is gutted, calls `std.os.linux.*` / `std.c.*` syscalls directly.
+Because it is launched through the system dynamic loader, `main.zig` calls
+`prctl(PR_SET_NAME, "reach")` to fix `/proc/self/comm` (and make `pidof reach`
+work).
