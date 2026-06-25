@@ -8,20 +8,20 @@ river 0.4.x is a *non-monolithic* compositor: river is **only** the compositor
 (it renders, handles input, talks to DRM/the GPU). The window manager is a
 **separate client process** — this one — that speaks the
 `river-window-management-v1` protocol and decides layout, focus, borders, and the
-bar. (Contrast dwl, where compositor and WM are one binary.) reach follows dwl's
-design closely, including a dwl `config.h`-style configuration model.
+bar. reach is that window manager. It is configured through compiled-in defaults
+plus an optional `config.zon` file (see [Configuration](#configuration)).
 
 ## Features
 
 - **Master-stack tiling** — the only layout (by design; no monocle/floating
   layout modes).
 - **tmux-style shared borders** — the focused window's interior edges are
-  highlighted in the gutter, dwl/tmux style, instead of per-window box borders.
-- **Tags** (dwl/dwm bitmask workspaces) — view, toggle-view, move-to-tag,
-  toggle-tag, view-all.
-- **Built-in dwlb-style status bar** — drawn on every output; the someblocks
-  blocks run *in-process* (no external `dwlb`/`someblocks`/fifo). Per-block
-  intervals and `SIGRTMIN+n` signal refresh work like suckless someblocks.
+  highlighted in the gutter, instead of per-window box borders.
+- **Tags** — bitmask workspaces: view, toggle-view, move-to-tag, toggle-tag,
+  view-all.
+- **Built-in status bar** — drawn on every output; status blocks run
+  *in-process* (no external bar or block helper, no fifo). Per-block intervals
+  and `SIGRTMIN+n` signal refresh are supported.
 - **Keybindings + multi-key chords** — arbitrary-depth chord tries built on
   river's submap primitive.
 - **Floating windows** — toggle float, fullscreen, keyboard move/resize.
@@ -48,24 +48,21 @@ from the network and caches them.
 zig build                 # → zig-out/bin/reach
 ```
 
-Build with **plain `zig build`**. Do **NOT** use `nix develop --command zig
-build`: outside the nix dev shell reach links the *system* wayland/pixman/fcft
-(no nix RUNPATH), matching how river itself is built, so both are launched through
-the system loader. See the header of `run.sh` for the full rationale.
+Build with **plain `zig build`**: reach links the *system* `wayland`/`pixman`/
+`fcft`, matching how river itself is built.
 
 ## Run
 
 river only advertises the window-management protocol to the process it launches
-itself, so reach is started via river's `-c`:
+itself, so reach must be started by river via its `-c` flag — pointing at the
+built binary:
 
 ```sh
-./run.sh                  # launch native river on a real TTY, with reach as its WM
+river -c /path/to/reach/zig-out/bin/reach
 ```
 
-`run.sh` launches **both** river and reach via the system dynamic loader because
-they are nix-zig binaries with system sonames. To test rendering without the GPU,
-run river with `WLR_RENDERER=pixman` (useful where hardware EGL/GPU acceleration
-is unavailable).
+reach then runs as river's window manager for that session. To test rendering
+without GPU acceleration, start river with `WLR_RENDERER=pixman`.
 
 ## Configuration
 
