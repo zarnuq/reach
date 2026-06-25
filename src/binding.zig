@@ -529,8 +529,9 @@ fn execute(action: Action) void {
     const ctx = Context.get();
     switch (action) {
         // Tag actions. No warp here: switching/ moving tags on the same monitor
-        // shouldn't yank the pointer (user preference). focusmon/tagmon still warp
-        // because those cross monitors.
+        // shouldn't yank the pointer (user preference). focusmon still warps
+        // because it moves the keyboard selection across monitors; tagmon does
+        // not (it moves a window, not the selection — see its case below).
         .view => |t| {
             if (t == 0) return;
             const out = focusedOutput() orelse return;
@@ -613,10 +614,10 @@ fn execute(action: Action) void {
             focusMonitor(dir);
             requestWarp();
         },
-        .tagmon => |dir| {
-            tagMonitor(dir);
-            requestWarp();
-        },
+        // Moves the focused WINDOW to the adjacent monitor. Unlike focusmon, the
+        // selection (and pointer) stay put — moving a window shouldn't yank the
+        // cursor — so no warp here.
+        .tagmon => |dir| tagMonitor(dir),
     }
 }
 
@@ -755,8 +756,12 @@ fn focusMonitor(dir: i32) void {
     ctx.focused = topVisibleOn(next_out);
 }
 
-/// Send the focused window to the adjacent monitor (onto that monitor's viewed
-/// tags), dwl-style. The selection stays put; focus falls to whatever's left.
+/// Send the focused window to the adjacent monitor, keeping it on the SAME tag
+/// (desktop) number it was already on rather than retagging it to the
+/// destination's viewed tags. So a window on tag 3 stays on tag 3 over there —
+/// it only shows immediately if that monitor is already viewing tag 3, otherwise
+/// it waits on that desktop. The selection stays put; focus falls to whatever's
+/// left on the current monitor.
 fn tagMonitor(dir: i32) void {
     const ctx = Context.get();
     const cur = focusedOutput() orelse return;
@@ -764,7 +769,6 @@ fn tagMonitor(dir: i32) void {
     const w = ctx.focused orelse return;
 
     w.output = next_out;
-    w.tags = next_out.tagset;
     refocus(cur);
 }
 

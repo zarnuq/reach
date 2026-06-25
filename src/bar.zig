@@ -149,16 +149,10 @@ pub const Bar = struct {
         fillRect(buffer, 0, 0, w, h, &normal_bg);
 
         // 1. Tag area (workspaces) on the far left.
-        var x: i32 = renderTags(buffer, out, h, pad);
-
-        // 2. Layout symbol (always normal scheme).
-        x += @divFloor(pad, 2);
-        x += font.renderStr(gpa, buffer, config.bar.layout_symbol, &normal_fg, x, 0);
-        x += pad;
-
-        // 3. Title region — fills the rest; status (drawn next) overwrites its
-        //    right edge. The focused output gets the `select` highlight here.
-        const title_start = x;
+        // 2. Title region — fills the rest, starting right after the tags; status
+        //    (drawn next) overwrites its right edge. The focused output gets the
+        //    `select` highlight here.
+        const title_start = renderTags(buffer, out, h, pad);
         const title_fg = if (is_current) &select_fg else &normal_fg;
         const title_bg = if (is_current) &select_bg else &normal_bg;
         fillRect(buffer, title_start, 0, w - title_start, h, title_bg);
@@ -168,8 +162,22 @@ pub const Bar = struct {
             }
         }
 
-        // 4. Status text, right-aligned, with `^fg(...)` color parsing.
-        renderStatus(buffer, title_start, w, pad, &status_bg);
+        // 4. Status text, right-aligned, with `^fg(...)` color parsing. Returns
+        //    the left edge of the status block (== w when there's no status).
+        const status_left = renderStatus(buffer, title_start, w, pad, &status_bg);
+
+        // 5. Focused window's app_id, right-aligned just left of the status, on
+        //    the same row as the title. Handy for writing window rules (the
+        //    app_id is the rule's match key). Drawn over the already-filled title
+        //    background, so it uses the title color scheme. Skipped if it would
+        //    collide with the title's left edge.
+        if (topWindowOn(out)) |win| {
+            if (win.app_id) |a| {
+                const aw = font.strWidth(gpa, a);
+                const ax = status_left - pad - aw;
+                if (ax > title_start) _ = font.renderStr(gpa, buffer, a, title_fg, ax, 0);
+            }
+        }
 
         // Commit. syncNextCommit aligns this with river's render sequence.
         self.wl_surface.attach(buffer.wl_buffer, 0, 0);
@@ -186,11 +194,13 @@ pub const Bar = struct {
 
 /// Parse and draw the someblocks status text into the right end of the bar.
 /// `min_x` is the title start (status never overlaps the title's left edge).
-fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman.Color) void {
+/// Returns the x of the status block's left edge so the caller can place the
+/// app_id just left of it; returns `w` (the right edge) when there's no status.
+fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman.Color) i32 {
     const ctx = Context.get();
         const gpa = ctx.gpa;
         const text = status.text();
-        if (text.len == 0) return;
+        if (text.len == 0) return w;
 
         const default_fg = config.bar.status_fg;
 
@@ -208,13 +218,13 @@ fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman
             if (text[i] == '^') {
                 // `^^` → a literal caret.
                 if (i + 1 < text.len and text[i + 1] == '^') {
-                    cleaned.append(gpa, '^') catch return;
+                    cleaned.append(gpa, '^') catch return w;
                     i += 2;
                     continue;
                 }
                 // `^name(arg)` command. Close the current run at this boundary.
                 if (cleaned.items.len > seg_start) {
-                    segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return;
+                    segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return w;
                 }
                 const name_start = i + 1;
                 const open = std.mem.indexOfScalarPos(u8, text, name_start, '(') orelse break;
@@ -228,14 +238,14 @@ fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman
                 seg_start = cleaned.items.len;
                 i = close + 1;
             } else {
-                cleaned.append(gpa, text[i]) catch return;
+                cleaned.append(gpa, text[i]) catch return w;
                 i += 1;
             }
         }
         if (cleaned.items.len > seg_start) {
-            segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return;
+            segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return w;
         }
-        if (segs.items.len == 0) return;
+        if (segs.items.len == 0) return w;
 
         // Rasterize each run and measure the total width.
         const Run = struct { color: pixman.Color, run: *const fcft.TextRun };
@@ -254,15 +264,17 @@ fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman
                 continue;
             };
         }
-        if (runs.items.len == 0) return;
+        if (runs.items.len == 0) return w;
 
         // Right-align, but never left of the title start.
         var x = @max(min_x, w - total - pad);
+        const left = x;
         fillRect(buffer, x, 0, w - x, font.height(), bg);
         x += @divFloor(pad, 2);
         for (runs.items) |r| {
             x += font.renderRun(buffer, r.run, &r.color, x, 0);
         }
+        return left;
 }
 
 /// Draw the tag (workspace) cells on the left of `out`'s bar and return the x
@@ -278,10 +290,15 @@ fn renderTags(buffer: *Buffer, out: *Output, h: i32, pad: i32) i32 {
     const select_fg = utils.color(config.bar.select_fg);
     const select_bg = utils.color(config.bar.select_bg);
 
-    // Which tags hold at least one (mapped) window on this output.
+    // Which tags hold at least one window on this output. NOTE: don't gate on
+    // `w.mapped` — that flag is only set once a window is actually laid out, which
+    // arrange() does solely for windows on a *viewed* tag (and placeFloating for
+    // floats). A window opened onto a tag you aren't viewing (e.g. a rule sending
+    // Signal to tag 4) would then never light up its tag here. Any managed window
+    // homed to this output occupies its tags, viewed or not.
     var occupied: u32 = 0;
     for (ctx.windows.items) |w| {
-        if (w.output == out and w.mapped) occupied |= w.tags;
+        if (w.output == out) occupied |= w.tags;
     }
 
     var x: i32 = 0;

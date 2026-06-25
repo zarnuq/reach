@@ -164,6 +164,12 @@ pub var rules: []const Rule = &[_]Rule{};
 /// gutters along the focused window's interior (shared) edges.
 pub var border_active: u32 = 0x89b4fa;
 
+/// Solid fill color for every *inactive* gutter (0xRRGGBB, forced opaque). The
+/// inner gaps between tiled windows would otherwise show the wallpaper through
+/// the seam; filling them gives inactive windows a solid border. The focused
+/// window's `border_active` highlight is drawn on top of this. Catppuccin mantle.
+pub var border_inactive: u32 = 0x181825;
+
 /// Thickness (px) of the highlight line. The line is centered within the gutter,
 /// so this is independent of `inner_gap` (keep it <= inner_gap).
 pub var border_thickness: i32 = 2;
@@ -205,10 +211,6 @@ pub const bar = struct {
 
     /// Draw the bar at the top of the output (false = bottom).
     pub var top: bool = true;
-
-    /// Symbol shown for the current layout. reach has exactly one layout
-    /// (master-stack tile, by design), matching dwl's "[]=".
-    pub var layout_symbol: []const u8 = "[]=";
 
     /// Colors as 0xRRGGBBAA.
     ///   normal_* — unfocused monitors / default text.

@@ -100,7 +100,6 @@ pub const KeySpec = struct {
 pub const BarSpec = struct {
     font: ?[:0]const u8 = null,
     top: ?bool = null,
-    layout_symbol: ?[]const u8 = null,
     normal_fg: ?u32 = null,
     normal_bg: ?u32 = null,
     select_fg: ?u32 = null,
@@ -124,6 +123,7 @@ pub const FileConfig = struct {
     float_default_frac_h: ?f32 = null,
     float_step: ?i32 = null,
     border_active: ?u32 = null,
+    border_inactive: ?u32 = null,
     border_thickness: ?i32 = null,
     env: ?[]const [2][:0]const u8 = null,
     autostart: ?[]const [:0]const u8 = null,
@@ -157,6 +157,9 @@ pub fn load(gpa: std.mem.Allocator) void {
     // source is never freed: parsed strings/slices below borrow from the ZON AST
     // which we also keep, and the config lives for the whole process anyway.
 
+    // The ZON parser inline-unrolls over every FileConfig field at comptime;
+    // each new field costs branches, so lift the quota above the default 1000.
+    @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
     const fc = std.zon.parse.fromSliceAlloc(FileConfig, gpa, source, &diag, .{}) catch |err| {
         log.err("config.zon parse failed ({}):\n{f}", .{ err, diag });
@@ -229,6 +232,7 @@ fn overlay(fc: FileConfig) void {
     if (fc.float_default_frac_h) |v| config.float_default_frac_h = v;
     if (fc.float_step) |v| config.float_step = v;
     if (fc.border_active) |v| config.border_active = v;
+    if (fc.border_inactive) |v| config.border_inactive = v;
     if (fc.border_thickness) |v| config.border_thickness = v;
     if (fc.env) |v| config.env = v;
     if (fc.autostart) |v| config.autostart = v;
@@ -238,7 +242,6 @@ fn overlay(fc: FileConfig) void {
     if (fc.bar) |b| {
         if (b.font) |v| config.bar.font = v;
         if (b.top) |v| config.bar.top = v;
-        if (b.layout_symbol) |v| config.bar.layout_symbol = v;
         if (b.normal_fg) |v| config.bar.normal_fg = v;
         if (b.normal_bg) |v| config.bar.normal_bg = v;
         if (b.select_fg) |v| config.bar.select_fg = v;

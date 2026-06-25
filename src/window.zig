@@ -73,6 +73,11 @@ pub const Window = struct {
 
     // Float state and the inputs we derive it from.
     floating: bool = false,
+    // A window rule forced this window floating (config.rules `.floating`). Sticky:
+    // recomputeFloating() must keep honoring it, otherwise a later size-hint event
+    // would recompute `floating` purely from min/max and re-tile a rule-floated
+    // window (e.g. pavucontrol, which isn't fixed-size) a frame after it appears.
+    rule_floating: bool = false,
     has_parent: bool = false,
     min_width: i32 = 0,
     min_height: i32 = 0,
@@ -109,7 +114,7 @@ pub const Window = struct {
     fn recomputeFloating(self: *Window) void {
         const fixed = self.min_width > 0 and self.min_width == self.max_width and
             self.min_height > 0 and self.min_height == self.max_height;
-        self.floating = self.has_parent or fixed;
+        self.floating = self.rule_floating or self.has_parent or fixed;
     }
 
     /// MANAGE phase: set tiled edges and propose a size.
@@ -235,7 +240,10 @@ pub const Window = struct {
                     if (self.output) |o| o.tagset = r.tags;
                 }
             }
-            if (r.floating) self.floating = true;
+            if (r.floating) {
+                self.floating = true;
+                self.rule_floating = true; // sticky: survive later recomputeFloating()
+            }
             // Stash any custom-float geometry (dwl customfloat). It applies
             // whenever the window ends up floating — by rule, transient, or
             // fixed-size. Per-axis, in placeFloating: 0 = default/centered,

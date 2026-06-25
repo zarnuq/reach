@@ -25,6 +25,7 @@ const river = wayland.client.river;
 
 const config = @import("config.zig");
 const Context = @import("context.zig");
+const Output = @import("output.zig").Output;
 const bar = @import("bar.zig");
 
 /// One reusable solid-color rectangle in the scene.
@@ -51,8 +52,9 @@ pub const BorderSurface = struct {
     }
 
     /// Show this border at global (gx, gy) with size (w, h) in `color` (0xRRGGBB).
-    /// Must be called inside a render sequence (it positions the node).
-    fn show(self: *BorderSurface, gx: i32, gy: i32, w: i32, h: i32, color: u32) void {
+    /// `bottom` places the node below the windows (for the inactive backing fill)
+    /// instead of above them. Must be called inside a render sequence.
+    fn show(self: *BorderSurface, gx: i32, gy: i32, w: i32, h: i32, color: u32, bottom: bool) void {
         const ctx = Context.get();
         if (w <= 0 or h <= 0) {
             self.hide();
@@ -74,7 +76,7 @@ pub const BorderSurface = struct {
         self.surface.commit();
 
         self.node.setPosition(gx, gy);
-        self.node.placeTop(); // keep borders above the windows
+        if (bottom) self.node.placeBottom() else self.node.placeTop();
         self.visible = true;
     }
 
@@ -102,16 +104,51 @@ pub fn update() void {
 
     var used: usize = 0;
 
+    // 1) Inactive backing first: behind the tiled windows on each output, fill the
+    //    whole usable area with a solid color and place it at the bottom of the
+    //    scene. The windows cover it everywhere except the inner gaps, so those
+    //    seams stop showing the wallpaper — inactive windows get a solid border.
+    for (ctx.outputs.items) |out| used = inactiveBacking(out, used);
+
+    // 2) Active highlights last (placeTop), so the focused window's shared edges
+    //    sit above both the windows and the backing fill — the tmux look.
     if (focusedRects()) |fr| {
         for (fr.rects[0..fr.n]) |r| {
             const bs = ensure(used) orelse break;
             used += 1;
-            bs.show(fr.out_x + r.x, fr.out_y + r.y, r.w, r.h, config.border_active);
+            bs.show(fr.out_x + r.x, fr.out_y + r.y, r.w, r.h, config.border_active, false);
         }
     }
 
     // Hide any pooled surfaces we didn't use this frame.
     for (ctx.borders.items[used..]) |bs| bs.hide();
+}
+
+/// Fill `out`'s usable (tiled) area with `config.border_inactive`, placed below the
+/// windows. Only the inner gaps between windows show through, so this is what gives
+/// inactive windows their solid border instead of the wallpaper. Returns the
+/// updated count of border surfaces consumed this frame.
+fn inactiveBacking(out: *Output, used: usize) usize {
+    const ctx = Context.get();
+
+    // Need at least two tiled, currently-viewed windows for a gap to exist; a
+    // lone window covers the whole usable area, so the fill would be invisible.
+    var n: i32 = 0;
+    for (ctx.windows.items) |w| {
+        if (w.output == out and !w.floating and !w.fullscreen and (w.tags & out.tagset) != 0) n += 1;
+    }
+    if (n < 2) return used;
+
+    const og = config.outer_gap;
+    const bar_h = bar.height();
+    const top_reserve: i32 = if (config.bar.top) bar_h else 0;
+    const uw = out.width - 2 * og;
+    const uh = out.height - 2 * og - bar_h;
+    if (uw <= 0 or uh <= 0) return used;
+
+    const bs = ensure(used) orelse return used;
+    bs.show(out.x + og, out.y + og + top_reserve, uw, uh, config.border_inactive, true);
+    return used + 1;
 }
 
 /// Compute the focused window's highlight rectangles, porting dwl's
