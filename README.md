@@ -33,7 +33,8 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
 - **Autostart**, **cursor warp**, **focus-follows-mouse** (sloppy focus), and
   **session env** (`setenv` before autostart).
 
-Not implemented (optional): mouse move/resize/float (MOD+drag), cursor theme, bar
+Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
+(floating itself works via keyboard, above), a configurable cursor theme, and bar
 tag clicks.
 
 See `CLAUDE.md` for the full architecture notes, gotchas, and the source map.
