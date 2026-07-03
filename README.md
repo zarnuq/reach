@@ -41,6 +41,8 @@ See `CLAUDE.md` for the full architecture notes, gotchas, and the source map.
 
 ## Build
 
+[link text](https://github.com/zarnuq/gentoo-overlay)
+
 Requires **Zig 0.16** and the system `wayland-client`, `pixman`, and `fcft`
 libraries. The first build fetches `zig-wayland`, `zig-pixman`, and `zig-fcft`
 from the network and caches them.
