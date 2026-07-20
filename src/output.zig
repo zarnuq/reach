@@ -104,12 +104,19 @@ pub const Output = struct {
                 self.wl_output = wo;
                 wo.setListener(*Output, wlOutputListener, self);
             },
-            // The monitor went away. Orphan any windows that lived here (they'll be
-            // re-homed on the next manage cycle once another output exists), drop
-            // ourselves from the list, and release the proxy.
+            // The monitor went away. Move its windows to a surviving output (so
+            // they stay visible), drop ourselves from the list, and release the
+            // proxy. If this is the last output, windows get null and will be
+            // re-homed when an output reappears (wm.zig output event handler).
             .removed => {
+                // Find a surviving output BEFORE removing ourselves so windows
+                // on this output don't go dark when another monitor still exists.
+                var fallback: ?*Output = null;
+                for (ctx.outputs.items) |o| {
+                    if (o != self) { fallback = o; break; }
+                }
                 for (ctx.windows.items) |w| {
-                    if (w.output == self) w.output = null;
+                    if (w.output == self) w.output = fallback;
                 }
                 for (ctx.outputs.items, 0..) |o, i| {
                     if (o == self) {
@@ -119,7 +126,6 @@ pub const Output = struct {
                 }
                 // Don't leave the selection (or pointer target) dangling at a
                 // freed output; fall back to whatever monitor remains.
-                const fallback: ?*Output = if (ctx.outputs.items.len > 0) ctx.outputs.items[0] else null;
                 if (ctx.current_output == self) ctx.current_output = fallback;
                 if (ctx.pointer_output == self) ctx.pointer_output = fallback;
                 // Force the manage cycle to re-apply set_default to the fallback

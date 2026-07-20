@@ -224,6 +224,11 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
             };
             // First monitor to appear is selected by default.
             if (ctx.current_output == null) ctx.current_output = o;
+            // Re-home any windows orphaned by a total output blackout (e.g. all
+            // outputs were removed during a VT switch and are now reappearing).
+            for (ctx.windows.items) |w| {
+                if (w.output == null) w.output = o;
+            }
             log.info("output created (total {d})", .{ctx.outputs.items.len});
         },
 
