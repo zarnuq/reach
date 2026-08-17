@@ -99,14 +99,8 @@ pub const KeySpec = struct {
 /// nested `cursor.shake` table.
 pub const ShakeSpec = struct {
     enabled: ?bool = null,
-    threshold: ?f32 = null,
-    min_speed: ?f32 = null,
-    window_ms: ?u32 = null,
-    grow_rate: ?f32 = null,
-    shrink_rate: ?f32 = null,
-    max_size: ?u32 = null,
-    hold_ms: ?u32 = null,
-    size_step: ?u32 = null,
+    delay: ?u32 = null,
+    speed: ?f32 = null,
 };
 
 /// nested `cursor` table.
@@ -267,14 +261,8 @@ fn overlay(fc: FileConfig) void {
         if (c.export_env) |v| config.cursor.export_env = v;
         if (c.shake) |s| {
             if (s.enabled) |v| config.cursor.shake.enabled = v;
-            if (s.threshold) |v| config.cursor.shake.threshold = v;
-            if (s.min_speed) |v| config.cursor.shake.min_speed = v;
-            if (s.window_ms) |v| config.cursor.shake.window_ms = v;
-            if (s.grow_rate) |v| config.cursor.shake.grow_rate = v;
-            if (s.shrink_rate) |v| config.cursor.shake.shrink_rate = v;
-            if (s.max_size) |v| config.cursor.shake.max_size = v;
-            if (s.hold_ms) |v| config.cursor.shake.hold_ms = v;
-            if (s.size_step) |v| config.cursor.shake.size_step = v;
+            if (s.delay) |v| config.cursor.shake.delay = v;
+            if (s.speed) |v| config.cursor.shake.speed = v;
         }
     }
     if (fc.bar) |b| {

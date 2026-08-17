@@ -9,6 +9,12 @@
 // Detector is Hyprland's: over a trailing window of motion, compare distance
 // travelled against the diagonal of the box it stayed inside. A shake piles up
 // travel in a small box; a straight swipe has travel ≈ diagonal and never fires.
+//
+// That test only answers "is this shaking right now". What makes it feel right
+// is requiring it to stay true for `shake.delay` — an overshoot-and-correct
+// looks like a shake for a moment, a real shake keeps looking like one. So the
+// ratio tuning below stays fixed and permissive, and `delay` (plus `speed`) is
+// the whole user-facing surface.
 
 const std = @import("std");
 const linux = std.os.linux;
@@ -50,12 +56,50 @@ fn EVIOCGBIT(ev: u32, len: u32) c_ulong {
 }
 
 const MAX_DEVICES = 8;
-const MAX_SAMPLES = 256;
 
 /// Motion is folded into history at most this often, so a 1 kHz mouse and a
 /// 125 Hz one give comparable history. Deltas in between are accumulated, not
 /// dropped.
-const SAMPLE_INTERVAL_US = 2000;
+const SAMPLE_INTERVAL_US = 4000;
+
+/// Covers WINDOW_US at SAMPLE_INTERVAL_US with room to spare (512 * 4 ms ≈ 2 s).
+const MAX_SAMPLES = 512;
+
+// Detector tuning. Deliberately not exposed: `shake.delay` is the knob that
+// governs how easy this is to set off, and it does so far more predictably than
+// a ratio threshold. These are set permissive on purpose — the instantaneous
+// test just answers "does this look like shaking right now", and sustaining it
+// for `delay` is what separates a real shake from an overshoot-and-correct.
+
+/// Travel-to-diagonal ratio. Works out to about "sweeps per WINDOW_US", so 2.0
+/// over 500 ms is a lazy 2 Hz shake.
+const THRESHOLD: f64 = 2.0;
+
+/// Floor in raw device counts/sec — unaccelerated, so independent of pointer
+/// speed settings. Rejects slow scribbling that would otherwise score well.
+const MIN_SPEED: f64 = 250.0;
+
+/// Trailing motion history. Longer makes a sustained shake score higher: the
+/// bounding box stops growing once you oscillate in place, while travel keeps
+/// piling up.
+const WINDOW_US: u64 = 500_000;
+
+/// Gap tolerated between qualifying samples before the shake counts as broken,
+/// so the ratio dipping between reversals doesn't reset progress.
+const GAP_US: u64 = 100_000;
+
+/// Stay grown this long after the shake stops, so it's actually spottable.
+const HOLD_US: u64 = 500_000;
+
+/// Shrink at this fraction of `speed` — falling slower than it rises.
+const SHRINK_FACTOR: f32 = 0.35;
+
+const MAX_SIZE: u32 = 96;
+
+/// Quantise the animated size: themes only hold a few real sizes (Bibata:
+/// 16/20/22/24/28/32/40/48/56/64/72/80/88/96) and each distinct one costs the
+/// compositor an xcursor load plus a texture upload.
+const SIZE_STEP: f32 = 8;
 
 const Sample = struct {
     t_us: u64,
@@ -85,7 +129,9 @@ var last_sample_us: u64 = 0;
 var cur_size: f32 = 0;
 var sent_size: u32 = 0;
 var pending_size: ?u32 = null;
-var last_shake_us: u64 = 0;
+var last_shake_us: u64 = 0; // last time the ratio test passed
+var last_grow_us: u64 = 0; // last time growth was armed
+var shake_us: u64 = 0; // how long the shake has been sustained
 var last_tick_us: u64 = 0;
 
 fn nowUs() u64 {
@@ -223,12 +269,10 @@ fn dropOldest() void {
 }
 
 fn prune(now: u64) void {
-    const window_us = @as(u64, config.cursor.shake.window_ms) * 1000;
-    while (count > 1 and now - samples[head].t_us > window_us) dropOldest();
+    while (count > 1 and now - samples[head].t_us > WINDOW_US) dropOldest();
 }
 
 fn isShaking(now: u64) bool {
-    const sh = config.cursor.shake;
     if (count < 8) return false;
     const span_us = now - samples[head].t_us;
     if (span_us < 50_000) return false;
@@ -252,9 +296,9 @@ fn isShaking(now: u64) bool {
     if (diag < 1.0) return false;
 
     const speed = path_sum / (@as(f64, @floatFromInt(span_us)) / 1_000_000.0);
-    if (speed < sh.min_speed) return false;
+    if (speed < MIN_SPEED) return false;
 
-    return path_sum / diag >= sh.threshold;
+    return path_sum / diag >= THRESHOLD;
 }
 
 /// Returns true if the quantised size changed.
@@ -264,23 +308,42 @@ pub fn onTimer() bool {
 
     const sh = config.cursor.shake;
     const now = nowUs();
-    const dt = @as(f32, @floatFromInt(now - last_tick_us)) / 1_000_000.0;
+    const dt_us = now - last_tick_us;
+    const dt = @as(f32, @floatFromInt(dt_us)) / 1_000_000.0;
     last_tick_us = now;
 
     const base: f32 = @floatFromInt(config.cursor.size);
-    const max: f32 = @floatFromInt(sh.max_size);
-    const since_shake = now - last_shake_us;
-    const hold_us = @as(u64, sh.hold_ms) * 1000;
+    const max: f32 = @floatFromInt(MAX_SIZE);
+    const delay_us = @as(u64, sh.delay) * 1000;
 
-    if (since_shake < 100_000) {
-        cur_size = @min(max, cur_size + sh.grow_rate * dt);
-    } else if (since_shake < hold_us) {
-        // hold — keeps the size from flickering as the ratio dips between reversals
+    // Is the motion still qualifying? sampleMotion stamps last_shake_us on every
+    // pass; GAP_US of slack keeps a dip between reversals from breaking it.
+    const qualifying = now - last_shake_us < GAP_US;
+
+    // Sustained-shake accumulator. Builds while shaking, and bleeds off at twice
+    // the rate when not, so a stray flick never banks progress toward `delay`.
+    if (qualifying) {
+        shake_us = @min(shake_us + dt_us, delay_us + HOLD_US);
     } else {
-        cur_size = @max(base, cur_size - sh.shrink_rate * dt);
+        shake_us -= @min(shake_us, dt_us * 2);
     }
 
-    if (cur_size <= base and since_shake >= hold_us) {
+    // Must be shaking now AND have been for long enough. The `qualifying` term
+    // is what keeps delay = 0 from meaning "always armed".
+    const armed = qualifying and shake_us >= delay_us;
+
+    if (armed) {
+        cur_size = @min(max, cur_size + sh.speed * dt);
+        last_grow_us = now;
+    } else if (now - last_grow_us < HOLD_US) {
+        // hold, so it stays big enough to actually spot
+    } else {
+        cur_size = @max(base, cur_size - sh.speed * SHRINK_FACTOR * dt);
+    }
+
+    // Fully settled: stop ticking and forget the history so the next shake
+    // starts from a clean window.
+    if (cur_size <= base and !qualifying and shake_us == 0) {
         cur_size = base;
         armTimer(false);
         last_tick_us = 0;
@@ -297,13 +360,10 @@ pub fn onTimer() bool {
     return false;
 }
 
-/// Every distinct size costs the compositor an xcursor load plus a texture
-/// upload, and themes only hold a handful of real sizes.
 fn quantise(v: f32) u32 {
     const base: f32 = @floatFromInt(config.cursor.size);
-    const max: f32 = @floatFromInt(config.cursor.shake.max_size);
-    const step: f32 = @floatFromInt(@max(1, config.cursor.shake.size_step));
-    const snapped = base + @round((v - base) / step) * step;
+    const max: f32 = @floatFromInt(MAX_SIZE);
+    const snapped = base + @round((v - base) / SIZE_STEP) * SIZE_STEP;
     return @intFromFloat(@max(base, @min(max, snapped)));
 }
 
