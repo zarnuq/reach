@@ -21,6 +21,7 @@ const layout = @import("layout.zig");
 const border = @import("border.zig");
 const binding = @import("binding.zig");
 const status = @import("status.zig");
+const shake = @import("shake.zig");
 const Window = @import("window.zig").Window;
 const Output = @import("output.zig").Output;
 const Seat = @import("seat.zig").Seat;
@@ -38,7 +39,8 @@ pub fn deinit() void {
 }
 
 /// The event loop: poll() over the Wayland fd plus the status engine's 1s timerfd
-/// and real-time-signal fd (both optional; added to the set only when present).
+/// and real-time-signal fd, and shake-to-find's pointer devices and animation
+/// tick (all optional; added to the set only when present).
 pub fn run(display: *wl.Display) !void {
     const ctx = Context.get();
     const wl_fd = display.getFd();
@@ -46,13 +48,16 @@ pub fn run(display: *wl.Display) !void {
     while (ctx.running) {
         _ = display.flush();
 
-        // Slot 0 is always Wayland; the status engine adds its 1s timer and the
-        // real-time-signal fd when present.
-        var fds: [3]std.posix.pollfd = undefined;
+        // Slot 0 is always Wayland; the rest are added when their subsystem is
+        // live. Sized for wayland + status timer/signal + shake timer + devices.
+        var fds: [4 + shake.device_fds.len]std.posix.pollfd = undefined;
         var n: usize = 1;
         fds[0] = .{ .fd = wl_fd, .events = std.posix.POLL.IN, .revents = 0 };
         const timer_slot = addFd(&fds, &n, status.timer_fd);
         const signal_slot = addFd(&fds, &n, status.signal_fd);
+        const shake_timer_slot = addFd(&fds, &n, shake.timer_fd);
+        const shake_first = n;
+        for (shake.device_fds[0..shake.device_count]) |fd| _ = addFd(&fds, &n, fd);
 
         _ = std.posix.poll(fds[0..n], -1) catch |err| {
             log.err("poll failed: {}", .{err});
@@ -72,6 +77,17 @@ pub fn run(display: *wl.Display) !void {
         if (signal_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
             if (status.onSignal()) dirty = true;
         };
+
+        // Pointer motion feeds the shake detector; its tick animates the size.
+        for (0..shake.device_count) |i| {
+            if (fds[shake_first + i].revents & std.posix.POLL.IN != 0) {
+                if (shake.onMotion(i)) dirty = true;
+            }
+        }
+        if (shake_timer_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
+            if (shake.onTimer()) dirty = true;
+        };
+
         if (dirty) ctx.rwm.manageDirty();
     }
 }
@@ -132,6 +148,9 @@ fn manageCycle() void {
     // Warp the pointer to the focused window if a focus/layout keybind asked for
     // it (dwl warpcursor). Done last, so window geometry from arrange() is final.
     binding.applyWarp();
+
+    // Push the cursor theme/size (resting value at startup, or a shake step).
+    shake.applyPending();
 }
 
 /// RENDER: position and show every window, draw the tmux borders, then the bars.

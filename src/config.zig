@@ -35,6 +35,64 @@ pub var repeat_rate: i32 = 50;
 pub var repeat_delay: i32 = 300;
 
 // ---------------------------------------------------------------------------
+// Cursor
+// ---------------------------------------------------------------------------
+//
+// river renders the cursor; the WM picks its theme/size via
+// river_seat_v1.set_xcursor_theme. reach also exports XCURSOR_THEME/XCURSOR_SIZE
+// to children (the protocol suggests this) — without them libXcursor derives a
+// size from the X screen height, which on a multi-monitor Xwayland root is huge,
+// giving X11 windows a wildly oversized pointer.
+
+pub const cursor = struct {
+    /// Theme name under ~/.local/share/icons or /usr/share/icons. "default"
+    /// follows that theme's `Inherits` chain, i.e. whatever dconf/nwg-look set.
+    pub var theme: [:0]const u8 = "default";
+
+    /// Resting size in px; also the exported XCURSOR_SIZE.
+    pub var size: u32 = 24;
+
+    /// Export XCURSOR_THEME/XCURSOR_SIZE to spawned processes. Only affects
+    /// what reach starts — shells predating the session keep their old env.
+    pub var export_env: bool = true;
+
+    /// Shake to find: scrub the mouse, the cursor grows. See shake.zig.
+    pub const shake = struct {
+        /// When false, /dev/input is never opened and this costs nothing.
+        pub var enabled: bool = false;
+
+        /// HOW EASY: travel-to-diagonal ratio that counts as a shake — the main
+        /// knob. ~3 = a wrist flick sets it off, 6 = Hyprland's default, ~10 =
+        /// you have to really scrub.
+        pub var threshold: f32 = 6.0;
+
+        /// Speed floor (px/s). Slow scribbling can score a high ratio without
+        /// feeling like a shake; raise if it grows while you draw or drag.
+        pub var min_speed: f32 = 500.0;
+
+        /// Trailing motion history the ratio is computed over. Shorter =
+        /// twitchier; longer = needs a sustained shake.
+        pub var window_ms: u32 = 400;
+
+        /// HOW FAST, in cursor px per second. Defaults ramp 24 → 96 in about a
+        /// quarter second and fall back over about a third.
+        pub var grow_rate: f32 = 300.0;
+        pub var shrink_rate: f32 = 220.0;
+
+        pub var max_size: u32 = 96;
+
+        /// Hold before shrinking, so the size doesn't flicker as the ratio dips
+        /// between direction reversals.
+        pub var hold_ms: u32 = 250;
+
+        /// Quantise the animated size before sending it. Themes only hold a few
+        /// real sizes (Bibata: 16/20/22/24/28/32/40/48/56/64/72/80/88/96) and
+        /// each distinct one costs an xcursor load + texture upload.
+        pub var size_step: u32 = 8;
+    };
+};
+
+// ---------------------------------------------------------------------------
 // Environment (dwl `setenv` / setupenv)
 // ---------------------------------------------------------------------------
 //

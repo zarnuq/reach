@@ -96,6 +96,27 @@ pub const KeySpec = struct {
     chord: []const KeySpec = &.{},
 };
 
+/// nested `cursor.shake` table.
+pub const ShakeSpec = struct {
+    enabled: ?bool = null,
+    threshold: ?f32 = null,
+    min_speed: ?f32 = null,
+    window_ms: ?u32 = null,
+    grow_rate: ?f32 = null,
+    shrink_rate: ?f32 = null,
+    max_size: ?u32 = null,
+    hold_ms: ?u32 = null,
+    size_step: ?u32 = null,
+};
+
+/// nested `cursor` table.
+pub const CursorSpec = struct {
+    theme: ?[:0]const u8 = null,
+    size: ?u32 = null,
+    export_env: ?bool = null,
+    shake: ?ShakeSpec = null,
+};
+
 /// nested `bar` table.
 pub const BarSpec = struct {
     font: ?[:0]const u8 = null,
@@ -129,6 +150,7 @@ pub const FileConfig = struct {
     autostart: ?[]const [:0]const u8 = null,
     monitors: ?[]const config.Monitor = null,
     rules: ?[]const config.Rule = null,
+    cursor: ?CursorSpec = null,
     bar: ?BarSpec = null,
     binds: ?[]const KeySpec = null,
 };
@@ -239,6 +261,22 @@ fn overlay(fc: FileConfig) void {
     if (fc.monitors) |v| config.monitors = v;
     if (fc.rules) |v| config.rules = v;
     if (fc.binds) |v| binds = v;
+    if (fc.cursor) |c| {
+        if (c.theme) |v| config.cursor.theme = v;
+        if (c.size) |v| config.cursor.size = v;
+        if (c.export_env) |v| config.cursor.export_env = v;
+        if (c.shake) |s| {
+            if (s.enabled) |v| config.cursor.shake.enabled = v;
+            if (s.threshold) |v| config.cursor.shake.threshold = v;
+            if (s.min_speed) |v| config.cursor.shake.min_speed = v;
+            if (s.window_ms) |v| config.cursor.shake.window_ms = v;
+            if (s.grow_rate) |v| config.cursor.shake.grow_rate = v;
+            if (s.shrink_rate) |v| config.cursor.shake.shrink_rate = v;
+            if (s.max_size) |v| config.cursor.shake.max_size = v;
+            if (s.hold_ms) |v| config.cursor.shake.hold_ms = v;
+            if (s.size_step) |v| config.cursor.shake.size_step = v;
+        }
+    }
     if (fc.bar) |b| {
         if (b.font) |v| config.bar.font = v;
         if (b.top) |v| config.bar.top = v;

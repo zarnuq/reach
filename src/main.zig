@@ -35,6 +35,7 @@ const wm = @import("wm.zig");
 const bar = @import("bar.zig");
 const binding = @import("binding.zig");
 const status = @import("status.zig");
+const shake = @import("shake.zig");
 const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
 const Font = @import("render/font.zig");
@@ -80,6 +81,19 @@ pub fn main() !void {
     // binds, bar and blocks are all consumed from here on. No file → defaults
     // stand; a bad file → defaults stand and we log why (never bricks the session).
     confparse.load(gpa);
+
+    // Pin the cursor for X11 children. libXcursor with no XCURSOR_SIZE and no
+    // `Xcursor.size` resource falls back to a size derived from the X screen
+    // height — on a multi-monitor Xwayland root that is enormous, which is why
+    // some X11 windows show a giant pointer. Applied before config.env so an
+    // explicit entry there still wins.
+    if (config.cursor.export_env) {
+        var size_buf: [16]u8 = undefined;
+        _ = setenv("XCURSOR_THEME", config.cursor.theme.ptr, 1);
+        if (std.fmt.bufPrintZ(&size_buf, "{d}", .{config.cursor.size})) |s| {
+            _ = setenv("XCURSOR_SIZE", s.ptr, 1);
+        } else |_| {}
+    }
 
     // Export session environment variables (dwl setupenv). Done immediately
     // after connecting so that every child process — autostart, keybinds,
@@ -132,6 +146,9 @@ pub fn main() !void {
     Font.initLibrary() catch |err| log.err("fcft init failed: {} — bar disabled", .{err});
     bar.initFont(gpa);
     if (bar.enabled) status.start();
+
+    // Cursor theme/size, and shake-to-find's pointer devices if enabled.
+    shake.start();
 
     // Output configuration (config.monitors). Applied asynchronously once the
     // compositor advertises heads/modes during the event loop.
