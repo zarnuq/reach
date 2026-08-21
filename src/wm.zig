@@ -22,6 +22,7 @@ const border = @import("border.zig");
 const binding = @import("binding.zig");
 const status = @import("status.zig");
 const shake = @import("shake.zig");
+const reload = @import("reload.zig");
 const Window = @import("window.zig").Window;
 const Output = @import("output.zig").Output;
 const Seat = @import("seat.zig").Seat;
@@ -76,6 +77,14 @@ pub fn run(display: *wl.Display) !void {
         };
         if (signal_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
             if (status.onSignal()) dirty = true;
+            // SIGHUP arrived on the same fd: `kill -HUP $(pidof reach)` reloads
+            // config.zon. Like every other reload trigger it only sets the
+            // request; manageDirty gets us the manage cycle that applies it.
+            if (status.hup_received) {
+                status.hup_received = false;
+                reload.request();
+                dirty = true;
+            }
         };
 
         // Pointer motion feeds the shake detector; its tick animates the size.
@@ -108,6 +117,12 @@ fn addFd(fds: []std.posix.pollfd, n: *usize, maybe_fd: ?i32) ?usize {
 /// MANAGE: arrange tiled windows, place floats, propose sizes, set focus.
 fn manageCycle() void {
     const ctx = Context.get();
+
+    // Apply a requested config reload. Runs FIRST so the rest of this cycle — and
+    // enablePending() immediately below, which activates the rebuilt bindings —
+    // already sees the new config. Deferring to here is what makes it safe to
+    // request a reload from a keybinding's own handler.
+    reload.apply();
 
     // Activate any keybindings created since the last cycle (the protocol only
     // allows enable() inside a manage sequence).

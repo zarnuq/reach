@@ -32,6 +32,12 @@ extern fn fgets(buf: [*]u8, n: c_int, stream: *FILE) ?[*]u8;
 // SIGRTMIN+1 / SIGRTMIN+2, so the base must be 34 to match someblocks.
 const SIGRTMIN = 34;
 const SIGRTMAX = 64;
+const SIGHUP = 1;
+
+/// Set when SIGHUP lands on our signalfd. The event loop turns this into a config
+/// reload request. Kept as a plain flag rather than calling reload.zig directly so
+/// the status engine stays ignorant of the reload machinery.
+pub var hup_received: bool = false;
 
 // Blocks come from `config.bar.blocks`, which is now a runtime slice (it can be
 // overlaid from config.zon), so the per-block caches are sized to a compile-time
@@ -81,8 +87,12 @@ pub fn start() void {
     }
 
     // Block SIGRTMIN..SIGRTMAX and deliver them via a signalfd instead, so a
-    // `kill -SIGRTMIN+n` refreshes the matching blocks.
+    // `kill -SIGRTMIN+n` refreshes the matching blocks. SIGHUP rides the same fd
+    // (`kill -HUP $(pidof reach)` → config reload); routing it here rather than
+    // through a handler keeps every signal on the poll loop, so it is delivered
+    // at a point where mutating window-manager state is safe.
     var mask = linux.sigemptyset();
+    linux.sigaddset(&mask, @enumFromInt(SIGHUP));
     var sig: u32 = SIGRTMIN;
     while (sig <= SIGRTMAX) : (sig += 1) {
         linux.sigaddset(&mask, @enumFromInt(sig));
@@ -127,6 +137,10 @@ pub fn onSignal() bool {
         const bytes: [*]u8 = @ptrCast(&info);
         const n = posix.read(fd, bytes[0..@sizeOf(linux.signalfd_siginfo)]) catch break;
         if (n != @sizeOf(linux.signalfd_siginfo)) break;
+        if (info.signo == SIGHUP) {
+            hup_received = true;
+            continue;
+        }
         if (info.signo < SIGRTMIN) continue;
         const want: u8 = @intCast(info.signo - SIGRTMIN);
         for (0..nblocks()) |i| {
@@ -138,6 +152,18 @@ pub fn onSignal() bool {
     }
     if (!ran) return false;
     return recompose();
+}
+
+/// Re-run every block and recompose, after config.bar.blocks has been swapped by a
+/// reload. The per-block caches are indexed by position and `nblocks()` reads the
+/// live config, so there is nothing to tear down — the old contents are simply
+/// overwritten. The timerfd and signalfd are config-independent and keep running.
+pub fn restart() void {
+    for (0..nblocks()) |i| runBlock(i);
+    // Blocks that disappeared would otherwise keep their stale cached text, since
+    // the loop above only touches indices below the new count.
+    for (nblocks()..MAX_BLOCKS) |i| out_len[i] = 0;
+    compose();
 }
 
 /// Recompose and report whether the text differs from what's on screen.

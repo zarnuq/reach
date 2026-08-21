@@ -6,9 +6,16 @@
 // status blocks) must NOT be baked into the ELF — `/home/<you>/…` paths and your
 // monitor layout don't belong in a distro binary. So at startup we look for a
 // `config.zon` and overlay whatever it sets on top of config.zig's defaults. No
-// file → defaults are used verbatim (the binary works out of the box). This is
-// read ONCE at startup, not watched/reloaded (you said you don't need Hyprland-
-// style live reload), which keeps it simple and the steady-state zero-overhead.
+// file → defaults are used verbatim (the binary works out of the box).
+//
+// RELOAD: the file is re-read on demand (SIGHUP, or a `reload` keybind) — see
+// reload.zig for the ordering. Each load parses into its OWN arena; the previous
+// arena is freed only once every subsystem has rebound to the new one, because
+// config slices (rules, blocks, spawn strings, monitors) borrow straight from the
+// parsed AST. Reload is IDEMPOTENT: `defaults` is snapshotted before the first
+// overlay, and re-applied ahead of every later one, so deleting a field from
+// config.zon reverts it to the compiled-in value instead of stranding the old
+// override.
 //
 // FORMAT: ZON (Zig Object Notation) — the same syntax config.zig already uses for
 // its literals, parsed straight into the same types via std.zon. Every field is
@@ -79,6 +86,7 @@ pub const ActionSpec = union(enum) {
     incnmaster: i32,
     focusmon: i32,
     tagmon: i32,
+    reload,
 };
 
 /// One keybinding. `key` is a combo string: zero or more modifiers and the xkb
@@ -152,41 +160,142 @@ pub const FileConfig = struct {
 /// Binds parsed from the file, if any. binding.registerForSeat reads this: null
 /// means "no file binds, use the compiled-in default keymap"; non-null fully
 /// REPLACES the default action/spawn/chord binds (the tag binds are always
-/// generated). Lives for the whole process (never freed).
+/// generated). Owned by the current generation's arena (see `arena`).
 pub var binds: ?[]const KeySpec = null;
+
+/// The arena owning the CURRENTLY LIVE parsed config — every string and slice in
+/// config.zig points into it. Replaced wholesale on reload; the outgoing arena is
+/// destroyed by `release`, never before the new one is committed.
+var arena: ?*std.heap.ArenaAllocator = null;
+
+/// config.zig's compiled-in values, captured before the first overlay. Re-applied
+/// ahead of every reload so a field dropped from config.zon returns to its default
+/// rather than keeping the previous run's override. Every field is non-null after
+/// `snapshotDefaults`, so `overlay(defaults)` is a full reset.
+var defaults: FileConfig = .{};
+var defaults_taken = false;
+
+/// A parsed-but-not-yet-applied config plus the arena backing it.
+pub const Staged = struct {
+    fc: FileConfig,
+    arena: *std.heap.ArenaAllocator,
+};
 
 /// Locate, read and apply the config file. Call once at startup, before the seat,
 /// bar and outputs are configured (so the overlaid values are the ones used). On
 /// any problem (no file, parse error) the compiled defaults are left in place and
 /// reach keeps running — a bad config never bricks the session.
 pub fn load(gpa: std.mem.Allocator) void {
+    const staged = stage(gpa) orelse return;
+    // First load: there is no previous generation to displace.
+    std.debug.assert(commit(staged) == null);
+}
+
+/// Read and parse config.zon into a FRESH arena, without touching any live state.
+/// Returns null (having logged why) if there is no file or it doesn't parse — the
+/// caller then keeps running on the config it already has, which is what makes a
+/// typo in config.zon survivable during a reload.
+pub fn stage(gpa: std.mem.Allocator) ?Staged {
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = locate(&path_buf) orelse {
-        log.info("no config.zon found; using built-in defaults", .{});
-        return;
+        // At startup this means "run on the compiled-in defaults". On a reload it
+        // means the file went away, and we keep what is already loaded rather than
+        // yanking the session back to defaults over a missing file.
+        log.info("no config.zon found; keeping built-in defaults", .{});
+        return null;
     };
 
-    const source = readFileZ(gpa, path) catch |err| {
-        log.warn("could not read {s}: {} — using defaults", .{ path, err });
-        return;
+    const ar = gpa.create(std.heap.ArenaAllocator) catch return null;
+    ar.* = .init(gpa);
+    // Everything below allocates from the arena, so one deinit reclaims the file
+    // buffer and the whole parsed AST together.
+    const aa = ar.allocator();
+
+    const source = readFileZ(aa, path) catch |err| {
+        log.warn("could not read {s}: {} — keeping current config", .{ path, err });
+        ar.deinit();
+        gpa.destroy(ar);
+        return null;
     };
-    // source is never freed: parsed strings/slices below borrow from the ZON AST
-    // which we also keep, and the config lives for the whole process anyway.
 
     // The ZON parser inline-unrolls over every FileConfig field at comptime;
     // each new field costs branches, so lift the quota above the default 1000.
     @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
-    const fc = std.zon.parse.fromSliceAlloc(FileConfig, gpa, source, &diag, .{}) catch |err| {
+    const fc = std.zon.parse.fromSliceAlloc(FileConfig, aa, source, &diag, .{}) catch |err| {
         log.err("config.zon parse failed ({}):\n{f}", .{ err, diag });
-        log.warn("using built-in defaults", .{});
-        return;
+        log.warn("keeping current config", .{});
+        ar.deinit();
+        gpa.destroy(ar);
+        return null;
     };
 
-    overlay(fc);
-    log.info("loaded config from {s}", .{path});
+    log.info("parsed config from {s}", .{path});
+    return .{ .fc = fc, .arena = ar };
 }
 
+/// Point config.zig at `staged`, returning the arena it displaces (null on the
+/// first load). The caller MUST keep the returned arena alive until every
+/// subsystem holding borrowed slices — bindings above all — has been rebuilt, then
+/// hand it to `release`.
+pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
+    // Idempotent, and this is the only place an overlay can happen — so taking the
+    // snapshot here means the defaults are always captured pristine, with no
+    // ordering requirement on the caller.
+    snapshotDefaults();
+
+    const previous = arena;
+    arena = staged.arena;
+
+    // Reset first, so a field the file no longer mentions falls back to its
+    // compiled-in default instead of keeping the outgoing generation's value.
+    // `binds` needs doing by hand: overlay() skips nulls (that is how "the file
+    // didn't mention this" is encoded), but null is precisely the reset value
+    // here — it means "fall back to the compiled-in keymap".
+    binds = null;
+    if (defaults_taken) overlay(defaults);
+    overlay(staged.fc);
+    return previous;
+}
+
+/// Free a generation displaced by `commit`. Only safe once nothing points into it.
+pub fn release(gpa: std.mem.Allocator, old: ?*std.heap.ArenaAllocator) void {
+    const ar = old orelse return;
+    ar.deinit();
+    gpa.destroy(ar);
+}
+
+/// Capture config.zig's compiled-in values into `defaults` (once, on the first
+/// commit, before anything overlays them). Field names in the *Spec structs mirror config.zig's namespaces
+/// exactly, so the flat scalars copy across by reflection; the nested tables and
+/// `binds` (which has no config.zig counterpart) are the handful of exceptions.
+fn snapshotDefaults() void {
+    if (defaults_taken) return;
+    defaults_taken = true;
+    defaults = mirror(FileConfig, config);
+    defaults.bar = mirror(BarSpec, config.bar);
+    defaults.cursor = mirror(CursorSpec, config.cursor);
+    defaults.cursor.?.shake = mirror(ShakeSpec, config.cursor.shake);
+    // `binds` is not a config.zig variable: null means "use the compiled-in
+    // keymap", which is exactly the right reset value.
+    defaults.binds = null;
+}
+
+/// Build an all-fields-populated `Spec` from the like-named declarations of the
+/// namespace `src`. Fields with no counterpart in `src` (or whose counterpart is a
+/// nested namespace rather than a value) are left null for the caller to fill.
+fn mirror(comptime Spec: type, comptime src: anytype) Spec {
+    var out: Spec = .{};
+    inline for (@typeInfo(Spec).@"struct".fields) |f| {
+        const Child = @typeInfo(f.type).optional.child;
+        if (@hasDecl(src, f.name) and @TypeOf(@field(src, f.name)) == Child) {
+            @field(out, f.name) = @field(src, f.name);
+        }
+    }
+    return out;
+}
+
+/// First existing candidate path, written into `buf`. Returns null if none exist.
 /// First existing candidate path, written into `buf`. Returns null if none exist.
 fn locate(buf: []u8) ?[:0]const u8 {
     if (C.getenv("XDG_CONFIG_HOME")) |x| {

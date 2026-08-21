@@ -55,6 +55,26 @@ pub fn initFont(gpa: std.mem.Allocator) void {
     enabled = true;
 }
 
+/// Re-open the font after `config.bar.font` changed, reporting whether the bar's
+/// height moved (which means the layout's reserved area has to be recomputed).
+/// A font that fails to load leaves the bar disabled rather than rendering with a
+/// destroyed handle.
+pub fn reloadFont(gpa: std.mem.Allocator) bool {
+    if (Context.get().wl_shm == null) return false;
+    const old_height = height();
+
+    if (enabled) {
+        font.deinit();
+        enabled = false;
+    }
+    font.init(gpa, config.bar.font) catch |err| {
+        log.err("reload bar font failed: {} — bar disabled", .{err});
+        return old_height != 0;
+    };
+    enabled = true;
+    return height() != old_height;
+}
+
 /// Bar height in pixels (what the layout reserves). 0 when the bar is disabled.
 pub fn height() i32 {
     return if (enabled) font.height() else 0;

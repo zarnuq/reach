@@ -189,6 +189,32 @@ pub fn start() void {
     log.info("shake to find: watching {d} pointer device(s)", .{device_count});
 }
 
+/// Close every watched device and disarm the animation timer, so `start` can be
+/// re-run against a changed `config.cursor`. The event loop rebuilds its pollfd set
+/// from `device_fds`/`device_count` each iteration, so clearing them here is enough
+/// — but this must not run mid-poll, hence reload's manage-cycle deferral.
+pub fn stop() void {
+    for (device_fds[0..device_count]) |fd| _ = C.close(fd);
+    device_fds = [_]i32{-1} ** MAX_DEVICES;
+    device_count = 0;
+
+    if (timer_fd) |fd| {
+        _ = C.close(fd);
+        timer_fd = null;
+    }
+
+    // Drop the detector's history; the samples describe a gesture that is no
+    // longer in progress on devices that no longer exist.
+    head = 0;
+    count = 0;
+    path_sum = 0;
+    vx = 0;
+    vy = 0;
+    acc_x = 0;
+    acc_y = 0;
+    shake_us = 0;
+}
+
 fn armTimer(on: bool) void {
     const fd = timer_fd orelse return;
     const ns: isize = if (on) 16_000_000 else 0; // ~60 Hz

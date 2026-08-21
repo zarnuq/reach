@@ -44,11 +44,25 @@ var heads: std.ArrayList(*Head) = .empty;
 /// (Re)apply on the next `done`. Set when a head appears (startup / hotplug);
 /// cleared once we've issued an apply for the current snapshot.
 var need_apply: bool = true;
+/// Serial from the most recent `done`. Kept so a reload can configure immediately
+/// instead of waiting for a compositor state change that may never come.
+var last_serial: ?u32 = null;
 
 /// Store the manager and start listening. Called from main once the global binds.
 pub fn init(mgr: *zwlr.OutputManagerV1) void {
     manager = mgr;
     mgr.setListener(?*anyopaque, managerListener, null);
+}
+
+/// Re-apply `config.monitors` after a reload. `done` only arrives when output state
+/// actually changes, and editing config.zon changes nothing on the compositor side,
+/// so waiting for one would silently drop the new monitor config. Instead we reuse
+/// the last serial: if it is still current the apply lands now, and if it has gone
+/// stale the compositor answers `cancelled`, which re-arms `need_apply` for the
+/// next `done` through the path that already exists.
+pub fn reapply() void {
+    need_apply = true;
+    if (last_serial) |serial| onDone(serial);
 }
 
 fn managerListener(_: *zwlr.OutputManagerV1, event: zwlr.OutputManagerV1.Event, _: ?*anyopaque) void {
@@ -105,6 +119,7 @@ fn modeListener(_: *zwlr.OutputModeV1, event: zwlr.OutputModeV1.Event, self: *Mo
 }
 
 fn onDone(serial: u32) void {
+    last_serial = serial;
     if (!need_apply) return;
     // Clear first; a failed/cancelled apply re-sets it so the next `done` retries.
     need_apply = false;

@@ -32,6 +32,9 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
 - **Input configuration** — keyboard repeat rate/delay via river-input-management.
 - **Autostart**, **cursor warp**, **focus-follows-mouse** (sloppy focus), and
   **session env** (`setenv` before autostart).
+- **Live config reload** — `SIGHUP` or a keybind re-reads `config.zon` and rebuilds
+  keybinds, colors, rules, blocks, bar font and monitors in place; a config that
+  doesn't parse is rejected without disturbing the running session.
 
 Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
 (floating itself works via keyboard, above), a configurable cursor theme, and bar
@@ -93,9 +96,32 @@ monitors (mode/position/transform/scale, matched by connector name), window rule
 master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width, the
 bar (font, colors, status blocks), and the full keymap.
 
-The config is read **once at startup** (no live reload, by design). A malformed
-file is reported with a line/column error and the defaults are kept, so a bad edit
-never breaks the running session.
+### Live reload
+
+The config is re-read on demand — no restart, no lost windows:
+
+```sh
+kill -HUP $(pidof reach)     # or press Super+Shift+r
+```
+
+Reload rebuilds everything the file drives: colors, gaps, `nmaster`/`mfact`,
+borders, window rules, the keymap (including chords), status blocks, the bar font,
+and monitor configuration. A malformed file is reported with a line/column error
+and **is not applied at all** — the session keeps running on the config it already
+had, so a bad edit costs you a log line rather than your keybindings.
+
+Two settings are startup-only, because they cannot be anything else:
+
+| Setting | Why it can't reload |
+| --- | --- |
+| `env` | Already exported into a process tree that exists; re-exporting would not reach running children. |
+| `autostart` | Already run; re-running would launch second copies. |
+
+Deleting a field from `config.zon` reverts it to the compiled-in default, so the
+file always describes the running state rather than accumulating overrides. Window
+rules apply to windows opened from then on — reload does not retroactively re-tag
+or re-float windows that are already up. `tags.count` and the tag names are
+compile-time constants and are not part of the file.
 
 > **Monitor numbering and external clients.** reach's config-ordered monitor
 > numbering (used by `focusmon`/`tagmon` and window-rule `monitor` indices) is

@@ -25,6 +25,7 @@ const river = wayland.client.river;
 
 const config = @import("config.zig");
 const confparse = @import("confparse.zig");
+const reload = @import("reload.zig");
 const Context = @import("context.zig");
 const Seat = @import("seat.zig").Seat;
 const Output = @import("output.zig").Output;
@@ -100,6 +101,10 @@ pub const Action = union(enum) {
     incnmaster: i32,
     focusmon: i32,
     tagmon: i32,
+    // Re-read config.zon and rebuild everything it drives (reload.zig). Deferred
+    // to the next manage cycle — running it here would free this very Binding
+    // while its listener is still on the stack.
+    reload,
 };
 
 /// One live keybinding: the river object plus the action to run on press.
@@ -309,6 +314,7 @@ fn toAction(a: confparse.ActionSpec) Action {
         .incnmaster => |v| .{ .incnmaster = v },
         .focusmon => |v| .{ .focusmon = v },
         .tagmon => |v| .{ .tagmon = v },
+        .reload => .reload,
     };
 }
 
@@ -324,6 +330,7 @@ fn registerDefaultBinds(xkb: *river.XkbBindingsV1, seat: *Seat) void {
     add(xkb, seat, XKB_KEY_Return, MOD_SHIFT, .{ .spawn = "${TERMINAL:-foot}" });
 
     // Window management
+    add(xkb, seat, 'r', MOD_SHIFT, .reload);
     add(xkb, seat, 'p', MOD_SHIFT, .quit);
     add(xkb, seat, 'q', MOD_SHIFT, .killclient);
     add(xkb, seat, XKB_KEY_Return, MOD, .zoom);
@@ -341,6 +348,54 @@ fn registerDefaultBinds(xkb: *river.XkbBindingsV1, seat: *Seat) void {
     add(xkb, seat, '.', MOD, .{ .focusmon = 1 });
     add(xkb, seat, ',', MOD_SHIFT, .{ .tagmon = -1 });
     add(xkb, seat, '.', MOD_SHIFT, .{ .tagmon = 1 });
+}
+
+/// Destroy every binding and chord, returning the module to its pre-registration
+/// state so `reregister` can rebuild from a freshly parsed config. MUST run inside
+/// a manage sequence (disable() is manage-only) and MUST run before the config
+/// arena those bindings borrow from is released — `Action.spawn` points straight
+/// into the parsed AST.
+///
+/// `bindings_seat` deliberately survives: it is per-seat plumbing for the chord
+/// protocol, not configuration, and registerForSeat only creates one when null.
+pub fn teardown() void {
+    const ctx = Context.get();
+
+    // An armed submap has live, ENABLED sub-bindings and river has been told to
+    // eat the next key. Close it before anything is destroyed so we don't strand
+    // the compositor waiting on a submap whose bindings no longer exist.
+    if (active_chord) |c| {
+        for (c.subs.items) |b| b.rwm.disable();
+    }
+    active_chord = null;
+    pending_enter = null;
+    pending_exit = false;
+
+    for (list.items) |b| {
+        b.rwm.destroy();
+        ctx.gpa.destroy(b);
+    }
+    list.clearRetainingCapacity();
+    enable_from = 0;
+
+    // Chord subs are not in `list` (they are owned by their node), so they are
+    // destroyed here, node by node.
+    for (chords.items) |c| {
+        for (c.subs.items) |b| {
+            b.rwm.destroy();
+            ctx.gpa.destroy(b);
+        }
+        c.subs.deinit(ctx.gpa);
+        ctx.gpa.destroy(c);
+    }
+    chords.clearRetainingCapacity();
+}
+
+/// Rebuild every binding from the current config, for every seat. Pairs with
+/// `teardown`; the new bindings are created disabled and go live when the manage
+/// cycle reaches `enablePending`.
+pub fn reregister() void {
+    for (Context.get().seats.items) |seat| registerForSeat(seat);
 }
 
 /// Enable any newly-created bindings. Must be called from a manage sequence.
@@ -563,6 +618,10 @@ fn execute(action: Action) void {
         },
         // Spawn a shell command (double-fork; see spawn()).
         .spawn => |cmd| spawn(cmd),
+        // Re-read config.zon. Only *requests* the reload; reload.apply() runs it
+        // from the manage cycle that river guarantees follows this press, by
+        // which point this Binding is no longer on the stack and can be freed.
+        .reload => reload.request(),
         // Arm a two-key chord submap.
         .enter_submap => |chord| requestSubmapEnter(chord),
         // Window management
