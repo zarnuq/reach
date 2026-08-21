@@ -3,11 +3,17 @@
 // The look (per the user's spec): highlight only the gutters that *touch the
 // focused window* — its interior edges (the ones shared with a neighbor across a
 // gap), never the edges facing the screen, and never a full box around the
-// window. Inactive gutters are left empty.
+// window. Inactive gutters are left empty: a window nobody is focused on gets no
+// border at all, and the gap shows whatever is behind it (your wallpaper).
 //
 // We draw a highlight line in each interior-edge gutter of the focused window,
 // applying dwl's half-line-at-junction rule (a line extends only halfway into a
 // crossing gutter) — see focusedRects() for the geometry.
+//
+// The line HUGS the focused window: it sits in the gutter flush against that
+// window's own edge, not centred in the gutter. So `border_thickness` is all that
+// is ever painted, and `inner_gap` only controls how much wallpaper is left beyond
+// it — the two knobs stay independent however wide the gap gets.
 //
 // Drawing mechanism — no shm needed for solid colors:
 //   * a 1x1 wp_single_pixel_buffer holds the color,
@@ -25,7 +31,6 @@ const river = wayland.client.river;
 
 const config = @import("config.zig");
 const Context = @import("context.zig");
-const Output = @import("output.zig").Output;
 const bar = @import("bar.zig");
 
 /// One reusable solid-color rectangle in the scene.
@@ -52,9 +57,8 @@ pub const BorderSurface = struct {
     }
 
     /// Show this border at global (gx, gy) with size (w, h) in `color` (0xRRGGBB).
-    /// `bottom` places the node below the windows (for the inactive backing fill)
-    /// instead of above them. Must be called inside a render sequence.
-    fn show(self: *BorderSurface, gx: i32, gy: i32, w: i32, h: i32, color: u32, bottom: bool) void {
+    /// Placed above the windows. Must be called inside a render sequence.
+    fn show(self: *BorderSurface, gx: i32, gy: i32, w: i32, h: i32, color: u32) void {
         const ctx = Context.get();
         if (w <= 0 or h <= 0) {
             self.hide();
@@ -76,7 +80,7 @@ pub const BorderSurface = struct {
         self.surface.commit();
 
         self.node.setPosition(gx, gy);
-        if (bottom) self.node.placeBottom() else self.node.placeTop();
+        self.node.placeTop();
         self.visible = true;
     }
 
@@ -104,19 +108,14 @@ pub fn update() void {
 
     var used: usize = 0;
 
-    // 1) Inactive backing first: behind the tiled windows on each output, fill the
-    //    whole usable area with a solid color and place it at the bottom of the
-    //    scene. The windows cover it everywhere except the inner gaps, so those
-    //    seams stop showing the wallpaper — inactive windows get a solid border.
-    for (ctx.outputs.items) |out| used = inactiveBacking(out, used);
-
-    // 2) Active highlights last (placeTop), so the focused window's shared edges
-    //    sit above both the windows and the backing fill — the tmux look.
+    // The focused window's shared edges, and nothing else. Unfocused windows are
+    // deliberately unadorned — there is no backing fill behind the gaps, so every
+    // gutter that isn't touching the focused window shows the wallpaper.
     if (focusedRects()) |fr| {
         for (fr.rects[0..fr.n]) |r| {
             const bs = ensure(used) orelse break;
             used += 1;
-            bs.show(fr.out_x + r.x, fr.out_y + r.y, r.w, r.h, config.border_active, false);
+            bs.show(fr.out_x + r.x, fr.out_y + r.y, r.w, r.h, config.border_active);
         }
     }
 
@@ -124,35 +123,9 @@ pub fn update() void {
     for (ctx.borders.items[used..]) |bs| bs.hide();
 }
 
-/// Fill `out`'s usable (tiled) area with `config.border_inactive`, placed below the
-/// windows. Only the inner gaps between windows show through, so this is what gives
-/// inactive windows their solid border instead of the wallpaper. Returns the
-/// updated count of border surfaces consumed this frame.
-fn inactiveBacking(out: *Output, used: usize) usize {
-    const ctx = Context.get();
-
-    // Need at least two tiled, currently-viewed windows for a gap to exist; a
-    // lone window covers the whole usable area, so the fill would be invisible.
-    var n: i32 = 0;
-    for (ctx.windows.items) |w| {
-        if (w.output == out and !w.floating and !w.fullscreen and (w.tags & out.tagset) != 0) n += 1;
-    }
-    if (n < 2) return used;
-
-    const og = config.outer_gap;
-    const bar_h = bar.height();
-    const top_reserve: i32 = if (config.bar.top) bar_h else 0;
-    const uw = out.width - 2 * og;
-    const uh = out.height - 2 * og - bar_h;
-    if (uw <= 0 or uh <= 0) return used;
-
-    const bs = ensure(used) orelse return used;
-    bs.show(out.x + og, out.y + og + top_reserve, uw, uh, config.border_inactive, true);
-    return used + 1;
-}
-
 /// Compute the focused window's highlight rectangles, porting dwl's
-/// `drawclientborders` half-line geometry into reach's gapped layout. The
+/// `drawclientborders` half-line geometry into reach's gapped layout, with each
+/// line hugging the focused window's edge rather than centred in the gutter. The
 /// focused window's index `cidx` among the tiled windows and the total `total`
 /// drive which shared edges get a line and where the half-lines fall. Returns
 /// null when there is nothing to highlight.
@@ -192,65 +165,65 @@ fn focusedRects() ?struct { rects: [4]Rect, n: usize, out_x: i32, out_y: i32 } {
     if (cidx < 0 or total <= 1) return null; // single tiled window → no shared edge
 
     const og = config.outer_gap;
-    const ig = config.inner_gap;
     const t = config.border_thickness;
-    const half_t = @divFloor(t, 2);
-    const half_g = @divFloor(ig, 2);
     const nmaster = out.nmaster;
 
-    // Usable area (output-local) and the master column width, matching layout.zig
-    // — including the strip the bar reserves at the top/bottom.
+    // Usable area (output-local), matching layout.zig — including the strip the
+    // bar reserves at the top/bottom. Only the two-pane cases need it, to halve
+    // the line's length.
     const bar_h = bar.height();
     const top_reserve: i32 = if (config.bar.top) bar_h else 0;
     const ux = og;
     const uy = og + top_reserve;
     const uw = out.width - 2 * og;
     const uh = out.height - 2 * og - bar_h;
-    const nstack = total - @min(total, nmaster);
-    const master_w: i32 = if (nstack > 0)
-        @intFromFloat(out.mfact * @as(f32, @floatFromInt(uw)))
-    else
-        uw;
-    // Center of the vertical gutter dividing master and stack columns.
-    const divider_cx = ux + master_w + half_g;
+
+    // Every line HUGS the focused window — it goes in the gutter flush against
+    // that window's own edge, so its position derives from `f` alone and the
+    // gutter's width never enters into it. `f.x + f.width` is the first column
+    // outside the right edge; `f.x - t` is the last column before the left edge.
+    const in_master = cidx < nmaster;
 
     var rects: [4]Rect = undefined;
     var n: usize = 0;
 
     if (nmaster == 1 and total == 2) {
-        // Two panes side by side: half-height vertical line at the divider —
-        // TOP half when the focused pane is the master (left, cidx 0), BOTTOM
-        // half when it's the stack (right, cidx 1).
+        // Two panes side by side: half-height vertical line hugging the focused
+        // pane — TOP half when it is the master (left, cidx 0), BOTTOM half when
+        // it is the stack (right, cidx 1).
         const y0 = uy + (if (cidx == 1) @divFloor(uh, 2) else 0);
         const h = @divFloor(uh, 2);
-        rects[n] = .{ .x = divider_cx - half_t, .y = y0, .w = t, .h = h };
+        const x = if (cidx == 1) f.x - t else f.x + f.width;
+        rects[n] = .{ .x = x, .y = y0, .w = t, .h = h };
         n += 1;
     } else if (nmaster != 1 and total == 2) {
-        // Two panes stacked: half-width horizontal line at the vertical center —
-        // LEFT or RIGHT half depending on which pane is focused.
+        // Two panes stacked: half-width horizontal line hugging the focused pane —
+        // its bottom edge when it is the upper pane, its top edge when it is the
+        // lower one. LEFT or RIGHT half depending on which pane is focused.
         const x0 = ux + (if (cidx == 1) @divFloor(uw, 2) else 0);
         const w = @divFloor(uw, 2);
-        const cy = uy + @divFloor(uh, 2);
-        rects[n] = .{ .x = x0, .y = cy - half_t, .w = w, .h = t };
+        const y = if (cidx == 1) f.y - t else f.y + f.height;
+        rects[n] = .{ .x = x0, .y = y, .w = w, .h = t };
         n += 1;
     } else {
         // General case.
-        // Vertical divider segment, spanning the focused window's height.
+        // Vertical line on the side facing the other column: the focused window's
+        // right edge when it sits in the master column, its left edge when it sits
+        // in the stack.
         if (nmaster > 0 and total > nmaster) {
-            rects[n] = .{ .x = divider_cx - half_t, .y = f.y, .w = t, .h = f.height };
+            const x = if (in_master) f.x + f.width else f.x - t;
+            rects[n] = .{ .x = x, .y = f.y, .w = t, .h = f.height };
             n += 1;
         }
         // Horizontal line ABOVE, only when the focused window has a neighbor above
         // in its own column. Spans just the focused window's column (its width).
         if ((cidx > 0 and cidx < nmaster) or (cidx > nmaster)) {
-            const cy = f.y - half_g;
-            rects[n] = .{ .x = f.x, .y = cy - half_t, .w = f.width, .h = t };
+            rects[n] = .{ .x = f.x, .y = f.y - t, .w = f.width, .h = t };
             n += 1;
         }
         // Horizontal line BELOW, only when there is a neighbor below in its column.
         if ((cidx < nmaster - 1) or (cidx >= nmaster and cidx < total - 1)) {
-            const cy = f.y + f.height + half_g;
-            rects[n] = .{ .x = f.x, .y = cy - half_t, .w = f.width, .h = t };
+            rects[n] = .{ .x = f.x, .y = f.y + f.height, .w = f.width, .h = t };
             n += 1;
         }
     }

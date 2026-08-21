@@ -33,8 +33,6 @@
 
     // --- tmux-style focused-window border ----------------------------------
     .border_active = 0x89b4fa,
-    // Solid fill for inactive gutters (so gaps don't show the wallpaper).
-    .border_inactive = 0x181825,
     .border_thickness = 2,
 
     // --- session environment (dwl setupenv) --------------------------------

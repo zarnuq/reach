@@ -206,14 +206,9 @@ pub var rules: []const Rule = &[_]Rule{};
 /// gutters along the focused window's interior (shared) edges.
 pub var border_active: u32 = 0x89b4fa;
 
-/// Solid fill color for every *inactive* gutter (0xRRGGBB, forced opaque). The
-/// inner gaps between tiled windows would otherwise show the wallpaper through
-/// the seam; filling them gives inactive windows a solid border. The focused
-/// window's `border_active` highlight is drawn on top of this. Catppuccin mantle.
-pub var border_inactive: u32 = 0x181825;
-
-/// Thickness (px) of the highlight line. The line is centered within the gutter,
-/// so this is independent of `inner_gap` (keep it <= inner_gap).
+/// Thickness (px) of the highlight line. The line hugs the focused window's edge
+/// and sits inside the gutter, so this is independent of `inner_gap` (keep it
+/// <= inner_gap). Unfocused windows get no line at all.
 pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------
