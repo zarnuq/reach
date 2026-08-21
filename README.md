@@ -15,10 +15,10 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
 
 - **Master-stack tiling** — the only layout (by design; no monocle/floating
   layout modes).
-- **tmux-style shared borders** — the focused window's interior edges are
-  highlighted in the gutter, instead of per-window box borders. The line hugs the
-  focused window's edge; unfocused windows get no border at all, so the gaps show
-  your wallpaper.
+- **tmux-style shared borders** — every window's interior edges are highlighted in
+  the gutter, instead of per-window box borders. Each line hugs its own window's
+  edge, so a shared gutter carries two lines with wallpaper between them; focus
+  only picks the color (`border_active` vs `border_inactive`).
 - **Tags** — bitmask workspaces: view, toggle-view, move-to-tag, toggle-tag,
   view-all.
 - **Built-in status bar** — drawn on every output; status blocks run

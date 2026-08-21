@@ -33,6 +33,9 @@
 
     // --- tmux-style focused-window border ----------------------------------
     .border_active = 0x89b4fa,
+    // Same line, same thickness, for every unfocused window — focus only picks
+    // the color. Alpha is ignored: borders are always opaque.
+    .border_inactive = 0x45475a,
     .border_thickness = 2,
 
     // --- session environment (dwl setupenv) --------------------------------

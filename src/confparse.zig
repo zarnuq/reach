@@ -146,6 +146,7 @@ pub const FileConfig = struct {
     float_default_frac_h: ?f32 = null,
     float_step: ?i32 = null,
     border_active: ?u32 = null,
+    border_inactive: ?u32 = null,
     border_thickness: ?i32 = null,
     env: ?[]const [2][:0]const u8 = null,
     autostart: ?[]const [:0]const u8 = null,
@@ -356,6 +357,7 @@ fn overlay(fc: FileConfig) void {
     if (fc.float_default_frac_h) |v| config.float_default_frac_h = v;
     if (fc.float_step) |v| config.float_step = v;
     if (fc.border_active) |v| config.border_active = v;
+    if (fc.border_inactive) |v| config.border_inactive = v;
     if (fc.border_thickness) |v| config.border_thickness = v;
     if (fc.env) |v| config.env = v;
     if (fc.autostart) |v| config.autostart = v;

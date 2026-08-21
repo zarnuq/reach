@@ -206,9 +206,16 @@ pub var rules: []const Rule = &[_]Rule{};
 /// gutters along the focused window's interior (shared) edges.
 pub var border_active: u32 = 0x89b4fa;
 
-/// Thickness (px) of the highlight line. The line hugs the focused window's edge
-/// and sits inside the gutter, so this is independent of `inner_gap` (keep it
-/// <= inner_gap). Unfocused windows get no line at all.
+/// Line color for every *unfocused* window's shared edges (0xRRGGBB, alpha forced
+/// opaque). Identical geometry to `border_active` — same hugging line, same
+/// thickness — so focus only changes the color. Catppuccin surface1: muted enough
+/// to read as "not focused" while still visible against a wallpaper.
+pub var border_inactive: u32 = 0x45475a;
+
+/// Thickness (px) of the highlight line, for focused and unfocused alike. The line
+/// hugs its window's edge and sits inside the gutter, so this is independent of
+/// `inner_gap` — though a gutter narrower than 2x this will have its two lines
+/// meet in the middle.
 pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------

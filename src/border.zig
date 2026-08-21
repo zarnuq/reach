@@ -3,17 +3,20 @@
 // The look (per the user's spec): highlight only the gutters that *touch the
 // focused window* — its interior edges (the ones shared with a neighbor across a
 // gap), never the edges facing the screen, and never a full box around the
-// window. Inactive gutters are left empty: a window nobody is focused on gets no
-// border at all, and the gap shows whatever is behind it (your wallpaper).
+// window.
 //
-// We draw a highlight line in each interior-edge gutter of the focused window,
-// applying dwl's half-line-at-junction rule (a line extends only halfway into a
-// crossing gutter) — see focusedRects() for the geometry.
+// EVERY tiled window draws the same shape — a line in each of its interior-edge
+// gutters, applying dwl's half-line-at-junction rule (a line extends only halfway
+// into a crossing gutter) — see windowRects() for the geometry. The only thing
+// focus changes is the COLOR: `border_active` for the focused window,
+// `border_inactive` for all the others.
 //
-// The line HUGS the focused window: it sits in the gutter flush against that
-// window's own edge, not centred in the gutter. So `border_thickness` is all that
-// is ever painted, and `inner_gap` only controls how much wallpaper is left beyond
-// it — the two knobs stay independent however wide the gap gets.
+// The line HUGS its own window: it sits in the gutter flush against that window's
+// edge, not centred in the gutter. So `border_thickness` is all that is ever
+// painted, and `inner_gap` only controls how much wallpaper is left beyond it —
+// the two knobs stay independent however wide the gap gets. A gutter between two
+// windows therefore carries TWO lines, one hugging each side, with the wallpaper
+// visible between them.
 //
 // Drawing mechanism — no shm needed for solid colors:
 //   * a 1x1 wp_single_pixel_buffer holds the color,
@@ -31,6 +34,7 @@ const river = wayland.client.river;
 
 const config = @import("config.zig");
 const Context = @import("context.zig");
+const Window = @import("window.zig").Window;
 const bar = @import("bar.zig");
 
 /// One reusable solid-color rectangle in the scene.
@@ -108,37 +112,50 @@ pub fn update() void {
 
     var used: usize = 0;
 
-    // The focused window's shared edges, and nothing else. Unfocused windows are
-    // deliberately unadorned — there is no backing fill behind the gaps, so every
-    // gutter that isn't touching the focused window shows the wallpaper.
-    if (focusedRects()) |fr| {
-        for (fr.rects[0..fr.n]) |r| {
-            const bs = ensure(used) orelse break;
-            used += 1;
-            bs.show(fr.out_x + r.x, fr.out_y + r.y, r.w, r.h, config.border_active);
-        }
+    // Unfocused windows first, focused last: both sides of a shared gutter draw a
+    // line hugging their own edge, and drawing the focused one last means its
+    // colour wins wherever the two would overlap (they only can when the gutter is
+    // narrower than 2 * border_thickness).
+    for (ctx.windows.items) |w| {
+        if (w == ctx.focused) continue;
+        used = draw(w, config.border_inactive, used);
     }
+    if (ctx.focused) |f| used = draw(f, config.border_active, used);
 
     // Hide any pooled surfaces we didn't use this frame.
     for (ctx.borders.items[used..]) |bs| bs.hide();
 }
 
-/// Compute the focused window's highlight rectangles, porting dwl's
-/// `drawclientborders` half-line geometry into reach's gapped layout, with each
-/// line hugging the focused window's edge rather than centred in the gutter. The
-/// focused window's index `cidx` among the tiled windows and the total `total`
-/// drive which shared edges get a line and where the half-lines fall. Returns
-/// null when there is nothing to highlight.
-fn focusedRects() ?struct { rects: [4]Rect, n: usize, out_x: i32, out_y: i32 } {
+/// Draw one window's border lines in `color`, continuing the frame's surface
+/// allocation at `used` and returning the new count.
+fn draw(w: *Window, color: u32, used: usize) usize {
+    var n = used;
+    const wr = windowRects(w) orelse return n;
+    for (wr.rects[0..wr.n]) |r| {
+        const bs = ensure(n) orelse return n;
+        n += 1;
+        bs.show(wr.out_x + r.x, wr.out_y + r.y, r.w, r.h, color);
+    }
+    return n;
+}
+
+/// Compute one window's highlight rectangles, porting dwl's `drawclientborders`
+/// half-line geometry into reach's gapped layout, with each line hugging `f`'s own
+/// edge rather than centred in the gutter. `f`'s index `cidx` among the tiled
+/// windows and the total `total` drive which shared edges get a line and where the
+/// half-lines fall. Returns null when there is nothing to highlight.
+///
+/// Focus does not appear here at all — the caller picks the colour. Both windows
+/// either side of a gutter run this independently and each gets its own line.
+fn windowRects(f: *Window) ?struct { rects: [4]Rect, n: usize, out_x: i32, out_y: i32 } {
     const ctx = Context.get();
-    const f = ctx.focused orelse return null;
     if (f.fullscreen or !f.visible()) return null;
     const out = f.output orelse return null;
 
     // Floating window: it has no shared gutters with tiled neighbors (it stacks
     // above them), so the tmux half-line model doesn't apply. Draw a full box
-    // outline instead — a focus ring inset along the window's own edges (inset, so
-    // it can't spill off-screen when the window is flush against an output edge).
+    // outline instead — a ring inset along the window's own edges (inset, so it
+    // can't spill off-screen when the window is flush against an output edge).
     if (f.floating) {
         const t = config.border_thickness;
         const w = f.width;
