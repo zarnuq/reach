@@ -9,11 +9,11 @@
 // with a neighbour — never a box around the window, never anything on the
 // neighbour itself. Every other seam on the output stays bare.
 //
-// A shared face carries ONE line, tmux-style, centred on the FOCUSED window's own
-// edge — it straddles that edge, half over the window's outermost pixels and half
-// in the gap, so its position is the same relative to the window whatever
-// `inner_gap` is (0 included). The line is drawn at FULL length and cut
-// collinearly — the stretch
+// A shared face carries ONE line, tmux-style, sitting just OUTSIDE the FOCUSED
+// window's own edge — flush against it, never over it, so no pixel of the window
+// is covered. Its offset from the window is the same whatever `inner_gap` is; a
+// gap of at least `border_thickness` keeps the line entirely in the gutter. The
+// line is drawn at FULL length and cut collinearly — the stretch
 // running alongside the focused window is `border_active`, the remainder of the
 // same line is `border_inactive`. That split is the DIRECTION cue: the active
 // stretch shows you where the focus is along the shared edge.
@@ -138,8 +138,8 @@ fn draw(rects: []const Rect, out_x: i32, out_y: i32, color: u32, used: usize) us
 }
 
 /// The lines to draw this frame, split by colour. There is ONE line per shared
-/// face — the tmux single-divider look, centred on the focused window's own edge
-/// so it lands the same way at any `inner_gap` — drawn at FULL length and cut
+/// face — the tmux single-divider look, laid just outside the focused window's own
+/// edge so it never covers it, at any `inner_gap` — drawn at FULL length and cut
 /// collinearly: the
 /// stretch running alongside the focused window is `active`, the rest of that same
 /// line is `inactive`. Nothing is drawn on any face the focused window doesn't
@@ -225,7 +225,6 @@ fn focusedLines() ?Lines {
 
     const og = config.outer_gap;
     const t = config.border_thickness;
-    const half_t = @divFloor(t, 2);
     const nmaster = out.nmaster;
 
     // Usable area (output-local), matching layout.zig — including the strip the bar
@@ -237,10 +236,13 @@ fn focusedLines() ?Lines {
     const uw = out.width - 2 * og;
     const uh = out.height - 2 * og - bar_h;
 
-    // Every line is centred on the FOCUSED window's own facing edge: it straddles
-    // that edge, half over the window's outermost pixels and half in the gap. The
-    // gutter's width never enters into it, so the line lands in the same place
-    // relative to the window whatever `inner_gap` is — including 0.
+    // Every line is laid just OUTSIDE the focused window's own facing edge: it
+    // starts at the first pixel past that edge and grows away from the window, so
+    // it never covers any of it. A leading edge (left/top) therefore sits at
+    // `edge - t`; a trailing edge (right/bottom) sits at `edge`. The gutter's width
+    // never enters into it, so the offset from the window is the same whatever
+    // `inner_gap` is — but only a gap of >= `border_thickness` has room to hold the
+    // line without it reaching over the neighbour.
     const in_master = cidx < nmaster;
 
     if (nmaster == 1 and total == 2) {
@@ -248,38 +250,38 @@ fn focusedLines() ?Lines {
         // facing edge, cut in half. The half alongside the focused pane is active —
         // TOP half when it is the master (left, cidx 0), BOTTOM when it is the
         // stack (right, cidx 1).
-        const edge = if (cidx == 1) f.x else f.x + f.width;
+        const x = if (cidx == 1) f.x - t else f.x + f.width;
         const mid = uy + @divFloor(uh, 2);
         const ay0 = if (cidx == 1) mid else uy;
         const ay1 = if (cidx == 1) uy + uh else mid;
-        l.vline(edge - half_t, t, uy, uy + uh, ay0, ay1);
+        l.vline(x, t, uy, uy + uh, ay0, ay1);
     } else if (nmaster != 1 and total == 2) {
         // Two panes stacked: one full-width divider on the focused pane's facing
         // edge, cut in half — LEFT or RIGHT half active depending on which pane is
         // focused.
-        const edge = if (cidx == 1) f.y else f.y + f.height;
+        const y = if (cidx == 1) f.y - t else f.y + f.height;
         const mid = ux + @divFloor(uw, 2);
         const ax0 = if (cidx == 1) mid else ux;
         const ax1 = if (cidx == 1) ux + uw else mid;
-        l.hline(edge - half_t, t, ux, ux + uw, ax0, ax1);
+        l.hline(y, t, ux, ux + uw, ax0, ax1);
     } else {
-        // General case. The divider runs the whole usable height, centred on the
-        // focused window's facing edge: its right edge when it sits in the master
-        // column, its left edge when it sits in the stack. The stretch beside the
-        // focused window is active and the rest is inactive.
+        // General case. The divider runs the whole usable height, just outside the
+        // focused window's facing edge: past its right edge when it sits in the
+        // master column, before its left edge when it sits in the stack. The stretch
+        // beside the focused window is active and the rest is inactive.
         if (nmaster > 0 and total > nmaster) {
-            const edge = if (in_master) f.x + f.width else f.x;
-            l.vline(edge - half_t, t, uy, uy + uh, f.y, f.y + f.height);
+            const x = if (in_master) f.x + f.width else f.x - t;
+            l.vline(x, t, uy, uy + uh, f.y, f.y + f.height);
         }
         // Horizontal seam ABOVE, only when the focused window has a neighbour above
         // in its own column. It spans exactly that column, which is the focused
         // window's own width, so the whole line is active.
         if ((cidx > 0 and cidx < nmaster) or (cidx > nmaster)) {
-            l.hline(f.y - half_t, t, f.x, f.x + f.width, f.x, f.x + f.width);
+            l.hline(f.y - t, t, f.x, f.x + f.width, f.x, f.x + f.width);
         }
         // Horizontal seam BELOW, same reasoning.
         if ((cidx < nmaster - 1) or (cidx >= nmaster and cidx < total - 1)) {
-            l.hline(f.y + f.height - half_t, t, f.x, f.x + f.width, f.x, f.x + f.width);
+            l.hline(f.y + f.height, t, f.x, f.x + f.width, f.x, f.x + f.width);
         }
     }
 

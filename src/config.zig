@@ -203,7 +203,7 @@ pub const Rule = struct {
 pub var rules: []const Rule = &[_]Rule{};
 
 /// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Each face the
-/// focused window shares with a neighbour carries one line, centred on that
+/// focused window shares with a neighbour carries one line, laid just outside that
 /// window's own edge; this is the color of the stretch running alongside it.
 pub var border_active: u32 = 0x89b4fa;
 
@@ -214,11 +214,11 @@ pub var border_active: u32 = 0x89b4fa;
 /// the quieter half.
 pub var border_inactive: u32 = 0x45475a;
 
-/// Thickness (px) of the seam line. The line straddles the focused window's edge,
-/// so half of it sits on the window and half in the gap — its position relative to
-/// the window is the same at any `inner_gap`, 0 included. At `inner_gap = 0` the
-/// outer half reaches into the neighbour, the way a tmux pane border occupies its
-/// own column between two panes.
+/// Thickness (px) of the seam line. The line sits entirely OUTSIDE the focused
+/// window, flush against its edge, so no pixel of the window is ever covered — at
+/// any `inner_gap`. Set `inner_gap` to at least this value to keep the line inside
+/// the gutter; below that it reaches over the neighbour, the way a tmux pane border
+/// occupies its own column between two panes.
 pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------

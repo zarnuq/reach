@@ -16,8 +16,8 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
 - **Master-stack tiling** — the only layout (by design; no monocle/floating
   layout modes).
 - **tmux-style shared borders** — only the focused window is decorated, and only on
-  the faces it shares with a neighbour: one line per face, straddling that window's
-  own edge (so it sits identically at any `inner_gap`, 0 included). The line is cut
+  the faces it shares with a neighbour: one line per face, sitting just outside that
+  window's own edge — flush against it, never over it, at any `inner_gap`. The line is cut
   collinearly — `border_active` alongside the focused window, `border_inactive` for
   the rest of the same line.
 - **Tags** — bitmask workspaces: view, toggle-view, move-to-tag, toggle-tag,
