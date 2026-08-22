@@ -33,8 +33,10 @@
 
     // --- tmux-style focused-window border ----------------------------------
     .border_active = 0x89b4fa,
-    // Same line, same thickness, for every unfocused window — focus only picks
-    // the color. Alpha is ignored: borders are always opaque.
+    // Only the FOCUSED window is decorated, and only on faces it shares with a
+    // neighbour. Each such face carries one tmux-style line straddling that
+    // window's edge: the stretch alongside it is border_active, the rest of the
+    // same line is border_inactive. Alpha is ignored: borders are always opaque.
     .border_inactive = 0x45475a,
     .border_thickness = 2,
 

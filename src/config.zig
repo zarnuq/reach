@@ -202,20 +202,23 @@ pub const Rule = struct {
 /// tags use `1 << n` indices).
 pub var rules: []const Rule = &[_]Rule{};
 
-/// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Drawn in the
-/// gutters along the focused window's interior (shared) edges.
+/// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Each face the
+/// focused window shares with a neighbour carries one line, centred on that
+/// window's own edge; this is the color of the stretch running alongside it.
 pub var border_active: u32 = 0x89b4fa;
 
-/// Line color for every *unfocused* window's shared edges (0xRRGGBB, alpha forced
-/// opaque). Identical geometry to `border_active` — same hugging line, same
-/// thickness — so focus only changes the color. Catppuccin surface1: muted enough
-/// to read as "not focused" while still visible against a wallpaper.
+/// Color of the REST of that same line — the stretch beyond the focused window,
+/// collinear with the active part and the same thickness (0xRRGGBB, alpha forced
+/// opaque). In the two-pane cases the cut lands at the midpoint, so the divider
+/// reads half active / half inactive. Catppuccin surface1: muted enough to read as
+/// the quieter half.
 pub var border_inactive: u32 = 0x45475a;
 
-/// Thickness (px) of the highlight line, for focused and unfocused alike. The line
-/// hugs its window's edge and sits inside the gutter, so this is independent of
-/// `inner_gap` — though a gutter narrower than 2x this will have its two lines
-/// meet in the middle.
+/// Thickness (px) of the seam line. The line straddles the focused window's edge,
+/// so half of it sits on the window and half in the gap — its position relative to
+/// the window is the same at any `inner_gap`, 0 included. At `inner_gap = 0` the
+/// outer half reaches into the neighbour, the way a tmux pane border occupies its
+/// own column between two panes.
 pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------
