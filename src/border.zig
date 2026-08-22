@@ -278,35 +278,29 @@ fn focusedLines() ?Lines {
         // left edge when it sits in the stack. The stretch beside the focused window
         // is active and the rest is inactive.
         //
-        // It is BROKEN AT THE GAPS: a stretch of gutter is drawn only where a master
-        // window and a stack window actually face each other across it. Run at the
-        // full usable height instead, it would cross the horizontal gap between two
-        // stack windows as a lone stub floating in the wallpaper.
+        // Both stretches are keyed to a WINDOW'S OWN EDGE, never to the seam as a
+        // whole. The active one is the focused window's edge: one window, so one
+        // continuous run — a full-height master gets a single unbroken line, gaps in
+        // the far column included. The dim continuation is one segment per other
+        // window in the focused window's OWN column, and that is what breaks it at
+        // the gaps: the space between two of those windows belongs to no window, so
+        // nothing is drawn there.
+        //
+        // Keying it to the seam instead — lighting the gutter wherever a master and
+        // a stack window face each other — is wrong: a full-height master faces every
+        // stack window, so it would emit one active segment per stack window and the
+        // single divider would read as several separate lines.
         if (nmaster > 0 and total > nmaster) {
             const x = if (in_master) f.x + f.width else f.x - t;
-            var mi: i32 = 0;
-            for (ctx.windows.items) |m| {
-                if (m.output != out or m.floating or !m.visible()) continue;
-                const m_idx = mi;
-                mi += 1;
-                if (m_idx >= nmaster) continue; // master column only
-                var si: i32 = 0;
-                for (ctx.windows.items) |sw| {
-                    if (sw.output != out or sw.floating or !sw.visible()) continue;
-                    const s_idx = si;
-                    si += 1;
-                    if (s_idx < nmaster) continue; // stack column only
-                    const y0 = @max(m.y, sw.y);
-                    const y1 = @min(m.y + m.height, sw.y + sw.height);
-                    if (y1 <= y0) continue; // these two never face each other
-                    const ay0 = @max(y0, f.y);
-                    const ay1 = @min(y1, f.y + f.height);
-                    if (ay1 > ay0) {
-                        l.vline(x, t, y0, y1, ay0, ay1);
-                    } else {
-                        l.addInactive(.{ .x = x, .y = y0, .w = t, .h = y1 - y0 });
-                    }
-                }
+            l.addActive(.{ .x = x, .y = f.y, .w = t, .h = f.height });
+            var i: i32 = 0;
+            for (ctx.windows.items) |w| {
+                if (w.output != out or w.floating or !w.visible()) continue;
+                const idx = i;
+                i += 1;
+                if (w == f) continue;
+                if ((idx < nmaster) != in_master) continue; // focused window's column only
+                l.addInactive(.{ .x = x, .y = w.y, .w = t, .h = w.height });
             }
         }
         // Horizontal seams span exactly the focused window's own column, so the
