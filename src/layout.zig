@@ -64,20 +64,25 @@ pub fn arrange(out: *Output) void {
     for (tiled.items, 0..) |w, idx| {
         const i: i32 = @intCast(idx);
         if (i < nmaster) {
-            // Master column, split vertically into nmaster rows.
+            // Master column, split vertically into nmaster rows. The division
+            // leaves up to nmaster-1 px over, so the LAST row runs to the bottom
+            // edge instead of taking a cell: handing the remainder to nobody leaves
+            // a sliver of background under the column whose height changes with the
+            // window count.
             const cell_h = @divFloor(usable_h - (nmaster - 1) * config.inner_gap, nmaster);
             w.x = config.outer_gap;
             w.y = oy + i * (cell_h + config.inner_gap);
             w.width = master_w;
-            w.height = cell_h;
+            w.height = if (i == nmaster - 1) oy + usable_h - w.y else cell_h;
         } else {
-            // Stack column, split vertically into nstack rows.
+            // Stack column, split vertically into nstack rows — same remainder
+            // rule as the master column above.
             const si = i - nmaster;
             const cell_h = @divFloor(usable_h - (nstack - 1) * config.inner_gap, nstack);
             w.x = config.outer_gap + master_w + config.inner_gap;
             w.y = oy + si * (cell_h + config.inner_gap);
             w.width = stack_w;
-            w.height = cell_h;
+            w.height = if (si == nstack - 1) oy + usable_h - w.y else cell_h;
         }
         w.width = @max(1, w.width);
         w.height = @max(1, w.height);

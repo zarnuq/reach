@@ -40,6 +40,8 @@ const river = wayland.client.river;
 const config = @import("config.zig");
 const Context = @import("context.zig");
 const bar = @import("bar.zig");
+const Output = @import("output.zig").Output;
+const Window = @import("window.zig").Window;
 
 /// One reusable solid-color rectangle in the scene.
 pub const BorderSurface = struct {
@@ -191,10 +193,18 @@ const Lines = struct {
     }
 };
 
-/// Compute the focused window's seam lines, porting dwl's `drawclientborders`
-/// half-line geometry into reach's gapped layout. `cidx` (the focused window's
-/// index among the tiled windows) and `total` drive which seams exist and where the
-/// active/inactive cut falls. Returns null when there is nothing to draw.
+/// Does `w` take part in `out`'s tiling right now? Both passes below have to agree
+/// on this exactly — one counts the windows to find the focused one's index, the
+/// other walks the same sequence to place the dim segments — so it is written once.
+fn tiledOn(w: *Window, out: *Output) bool {
+    return w.output == out and !w.floating and w.visible();
+}
+
+/// Compute the focused window's seam lines. `cidx` (the focused window's index
+/// among the tiled windows) and `total` drive which seams exist and where the
+/// active/inactive cut falls; the two `total == 2` cases below are where dwl's
+/// `drawclientborders` half-line geometry survives. Returns null when there is
+/// nothing to draw.
 fn focusedLines() ?Lines {
     const ctx = Context.get();
     const f = ctx.focused orelse return null;
@@ -224,25 +234,14 @@ fn focusedLines() ?Lines {
     var total: i32 = 0;
     var cidx: i32 = -1;
     for (ctx.windows.items) |w| {
-        if (w.output == out and !w.floating and w.visible()) {
-            if (w == f) cidx = total;
-            total += 1;
-        }
+        if (!tiledOn(w, out)) continue;
+        if (w == f) cidx = total;
+        total += 1;
     }
     if (cidx < 0 or total <= 1) return null; // single tiled window → no shared seam
 
-    const og = config.outer_gap;
     const t = config.border_thickness;
     const nmaster = out.nmaster;
-
-    // Usable area (output-local), matching layout.zig — including the strip the bar
-    // reserves at the top/bottom. Only the full-line extents need it.
-    const bar_h = bar.height();
-    const top_reserve: i32 = if (config.bar.top) bar_h else 0;
-    const ux = og;
-    const uy = og + top_reserve;
-    const uw = out.width - 2 * og;
-    const uh = out.height - 2 * og - bar_h;
 
     // Every line is laid just OUTSIDE the focused window's own facing edge: it
     // starts at the first pixel past that edge and grows away from the window, so
@@ -258,6 +257,15 @@ fn focusedLines() ?Lines {
         // facing edge, cut in half. The half alongside the focused pane is active —
         // TOP half when it is the master (left, cidx 0), BOTTOM when it is the
         // stack (right, cidx 1).
+        //
+        // Only this case and its stacked twin need the usable area (output-local,
+        // matching layout.zig, bar strip included), so it is worked out here rather
+        // than every frame.
+        const bar_h = bar.height();
+        const top_reserve: i32 = if (config.bar.top) bar_h else 0;
+        const uy = config.outer_gap + top_reserve;
+        const uh = out.height - 2 * config.outer_gap - bar_h;
+
         const x = if (cidx == 1) f.x - t else f.x + f.width;
         const mid = uy + @divFloor(uh, 2);
         const ay0 = if (cidx == 1) mid else uy;
@@ -266,7 +274,10 @@ fn focusedLines() ?Lines {
     } else if (nmaster != 1 and total == 2) {
         // Two panes stacked: one full-width divider on the focused pane's facing
         // edge, cut in half — LEFT or RIGHT half active depending on which pane is
-        // focused.
+        // focused. The bar reserves no width, so only the outer gap matters here.
+        const ux = config.outer_gap;
+        const uw = out.width - 2 * config.outer_gap;
+
         const y = if (cidx == 1) f.y - t else f.y + f.height;
         const mid = ux + @divFloor(uw, 2);
         const ax0 = if (cidx == 1) mid else ux;
@@ -290,16 +301,21 @@ fn focusedLines() ?Lines {
         // a stack window face each other — is wrong: a full-height master faces every
         // stack window, so it would emit one active segment per stack window and the
         // single divider would read as several separate lines.
-        if (nmaster > 0 and total > nmaster) {
+        // One expression, used twice: the divider only exists when both columns do,
+        // and the corner overshoot below only makes sense when there is a divider to
+        // meet. They must never drift apart.
+        const has_divider = nmaster > 0 and total > nmaster;
+
+        if (has_divider) {
             const x = if (in_master) f.x + f.width else f.x - t;
             l.addActive(.{ .x = x, .y = f.y, .w = t, .h = f.height });
-            var i: i32 = 0;
+            var idx: i32 = 0;
             for (ctx.windows.items) |w| {
-                if (w.output != out or w.floating or !w.visible()) continue;
-                const idx = i;
-                i += 1;
+                if (!tiledOn(w, out)) continue;
+                const col_master = idx < nmaster;
+                idx += 1;
                 if (w == f) continue;
-                if ((idx < nmaster) != in_master) continue; // focused window's column only
+                if (col_master != in_master) continue; // focused window's column only
                 l.addInactive(.{ .x = x, .y = w.y, .w = t, .h = w.height });
             }
         }
@@ -307,19 +323,19 @@ fn focusedLines() ?Lines {
         // whole line is active — except on the side facing the divider, where they
         // run `t` further to CLOSE THE CORNER. Both lines sit outside the window, so
         // without the overshoot they miss each other by exactly one t x t square and
-        // the L reads as broken.
-        const has_divider = nmaster > 0 and total > nmaster;
+        // the L reads as broken. There is no cut to make — the seam is active end to
+        // end — so these go in as plain rectangles rather than through `hline`.
         const hx0 = if (has_divider and !in_master) f.x - t else f.x;
         const hx1 = if (has_divider and in_master) f.x + f.width + t else f.x + f.width;
 
         // Seam ABOVE, only when the focused window has a neighbour above it in its
         // own column.
         if ((cidx > 0 and cidx < nmaster) or (cidx > nmaster)) {
-            l.hline(f.y - t, t, hx0, hx1, hx0, hx1);
+            l.addActive(.{ .x = hx0, .y = f.y - t, .w = hx1 - hx0, .h = t });
         }
         // Seam BELOW, same reasoning.
         if ((cidx < nmaster - 1) or (cidx >= nmaster and cidx < total - 1)) {
-            l.hline(f.y + f.height, t, hx0, hx1, hx0, hx1);
+            l.addActive(.{ .x = hx0, .y = f.y + f.height, .w = hx1 - hx0, .h = t });
         }
     }
 
