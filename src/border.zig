@@ -13,7 +13,9 @@
 // window's own edge — flush against it, never over it, so no pixel of the window
 // is covered. Its offset from the window is the same whatever `inner_gap` is; a
 // gap of at least `border_thickness` keeps the line entirely in the gutter. The
-// line is drawn at FULL length and cut collinearly — the stretch
+// line is drawn at full length *along the windows it separates* — broken wherever
+// the gutter crosses a gap, so a gap band is never crossed by a lone stub — and
+// cut collinearly — the stretch
 // running alongside the focused window is `border_active`, the remainder of the
 // same line is `border_inactive`. That split is the DIRECTION cue: the active
 // stretch shows you where the focus is along the shared edge.
@@ -139,15 +141,19 @@ fn draw(rects: []const Rect, out_x: i32, out_y: i32, color: u32, used: usize) us
 
 /// The lines to draw this frame, split by colour. There is ONE line per shared
 /// face — the tmux single-divider look, laid just outside the focused window's own
-/// edge so it never covers it, at any `inner_gap` — drawn at FULL length and cut
+/// edge so it never covers it, at any `inner_gap` — drawn full length along the
+/// windows it separates, broken at the gaps, and cut
 /// collinearly: the
 /// stretch running alongside the focused window is `active`, the rest of that same
 /// line is `inactive`. Nothing is drawn on any face the focused window doesn't
 /// touch.
 const Lines = struct {
+    // The divider is emitted one segment per facing pair of windows, so the counts
+    // are data-driven rather than fixed: cap them and drop the overflow. Only the
+    // focused window's own row can be active, so `active` stays tiny.
     active: [4]Rect = undefined,
     n_active: usize = 0,
-    inactive: [6]Rect = undefined,
+    inactive: [32]Rect = undefined,
     n_inactive: usize = 0,
     out_x: i32 = 0,
     out_y: i32 = 0,
@@ -156,12 +162,14 @@ const Lines = struct {
     /// against the end of a seam leaves no remainder on that side.
     fn addActive(self: *Lines, r: Rect) void {
         if (r.w <= 0 or r.h <= 0) return;
+        if (self.n_active == self.active.len) return;
         self.active[self.n_active] = r;
         self.n_active += 1;
     }
 
     fn addInactive(self: *Lines, r: Rect) void {
         if (r.w <= 0 or r.h <= 0) return;
+        if (self.n_inactive == self.inactive.len) return;
         self.inactive[self.n_inactive] = r;
         self.n_inactive += 1;
     }
@@ -265,23 +273,59 @@ fn focusedLines() ?Lines {
         const ax1 = if (cidx == 1) ux + uw else mid;
         l.hline(y, t, ux, ux + uw, ax0, ax1);
     } else {
-        // General case. The divider runs the whole usable height, just outside the
-        // focused window's facing edge: past its right edge when it sits in the
-        // master column, before its left edge when it sits in the stack. The stretch
-        // beside the focused window is active and the rest is inactive.
+        // General case. The divider sits just outside the focused window's facing
+        // edge: past its right edge when it sits in the master column, before its
+        // left edge when it sits in the stack. The stretch beside the focused window
+        // is active and the rest is inactive.
+        //
+        // It is BROKEN AT THE GAPS: a stretch of gutter is drawn only where a master
+        // window and a stack window actually face each other across it. Run at the
+        // full usable height instead, it would cross the horizontal gap between two
+        // stack windows as a lone stub floating in the wallpaper.
         if (nmaster > 0 and total > nmaster) {
             const x = if (in_master) f.x + f.width else f.x - t;
-            l.vline(x, t, uy, uy + uh, f.y, f.y + f.height);
+            var mi: i32 = 0;
+            for (ctx.windows.items) |m| {
+                if (m.output != out or m.floating or !m.visible()) continue;
+                const m_idx = mi;
+                mi += 1;
+                if (m_idx >= nmaster) continue; // master column only
+                var si: i32 = 0;
+                for (ctx.windows.items) |sw| {
+                    if (sw.output != out or sw.floating or !sw.visible()) continue;
+                    const s_idx = si;
+                    si += 1;
+                    if (s_idx < nmaster) continue; // stack column only
+                    const y0 = @max(m.y, sw.y);
+                    const y1 = @min(m.y + m.height, sw.y + sw.height);
+                    if (y1 <= y0) continue; // these two never face each other
+                    const ay0 = @max(y0, f.y);
+                    const ay1 = @min(y1, f.y + f.height);
+                    if (ay1 > ay0) {
+                        l.vline(x, t, y0, y1, ay0, ay1);
+                    } else {
+                        l.addInactive(.{ .x = x, .y = y0, .w = t, .h = y1 - y0 });
+                    }
+                }
+            }
         }
-        // Horizontal seam ABOVE, only when the focused window has a neighbour above
-        // in its own column. It spans exactly that column, which is the focused
-        // window's own width, so the whole line is active.
+        // Horizontal seams span exactly the focused window's own column, so the
+        // whole line is active — except on the side facing the divider, where they
+        // run `t` further to CLOSE THE CORNER. Both lines sit outside the window, so
+        // without the overshoot they miss each other by exactly one t x t square and
+        // the L reads as broken.
+        const has_divider = nmaster > 0 and total > nmaster;
+        const hx0 = if (has_divider and !in_master) f.x - t else f.x;
+        const hx1 = if (has_divider and in_master) f.x + f.width + t else f.x + f.width;
+
+        // Seam ABOVE, only when the focused window has a neighbour above it in its
+        // own column.
         if ((cidx > 0 and cidx < nmaster) or (cidx > nmaster)) {
-            l.hline(f.y - t, t, f.x, f.x + f.width, f.x, f.x + f.width);
+            l.hline(f.y - t, t, hx0, hx1, hx0, hx1);
         }
-        // Horizontal seam BELOW, same reasoning.
+        // Seam BELOW, same reasoning.
         if ((cidx < nmaster - 1) or (cidx >= nmaster and cidx < total - 1)) {
-            l.hline(f.y + f.height, t, f.x, f.x + f.width, f.x, f.x + f.width);
+            l.hline(f.y + f.height, t, hx0, hx1, hx0, hx1);
         }
     }
 
