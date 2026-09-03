@@ -88,6 +88,10 @@ pub const Window = struct {
     // calls. null = never sent.
     tiled_applied: ?bool = null,
 
+    // River window-management v5 reports active capture sessions per window.
+    // Retain the count so UI/IPC can expose it without another protocol change.
+    capture_sessions: u32 = 0,
+
     pub fn create(rwm: *river.WindowV1) !*Window {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Window);
@@ -378,6 +382,8 @@ pub const Window = struct {
                 self.fullscreen = false;
                 ctx.rwm.manageDirty();
             },
+
+            .capture_sessions => |ev| self.capture_sessions = ev.count,
 
             // dimensions (actual size), decoration_hint, maximize requests,
             // pointer move/resize, … → not handled (move/resize is keyboard-driven).

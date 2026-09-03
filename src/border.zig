@@ -129,36 +129,27 @@ pub fn update() void {
     // Hide any pooled surfaces we didn't use this frame.
     for (ctx.borders.items[used..]) |bs| bs.hide();
 
-    // Remembered for restack(), which runs later in the render cycle.
+    // Remembered for raise(), which runs later in the render cycle.
     live = used;
 }
 
-/// How many pooled surfaces the last `update` left visible. `restack` needs it and
+/// How many pooled surfaces the last `update` left visible. `raise` needs it and
 /// runs separately, so it can't just take the count as an argument.
 var live: usize = 0;
 
-/// Stack this frame's border lines, called from stack.apply().
+/// Raise this frame's border lines to the top of the scene, inactive pieces first
+/// and active pieces last. stack.apply() calls this at the appropriate layer:
+/// after tiled windows but before floats for a tiled focus, or after floats for a
+/// floating focus.
 ///
-/// The lines go DIRECTLY above the window they decorate rather than at the top of
-/// the scene. place_top here was the bug: it put every line above every window, so
-/// focusing a tiled window that sat behind a floating one painted its border
-/// straight across the float, which is stacked above it. Anchoring to the focused
-/// window covers both shapes with one rule — a tiled window's gutter lines clear
-/// its tiled neighbours but stay under any float, while a focused float's ring is
-/// inset over that float's own edge pixels and so must sit above it to be seen.
-///
-/// CHAINED, not all anchored to the window: place_above inserts DIRECTLY above its
-/// argument, so re-using a single anchor would stack them in reverse and bury the
-/// active lines under the inactive ones `update` drew before them.
-pub fn restack() void {
+/// This must be above every tiled node, not merely above the focused one. With a
+/// zero-width inner gap the outside edge of a border necessarily overlaps the
+/// neighbouring tile; anchoring it only above a lower stack tile lets a higher
+/// tiled node occlude the separator completely.
+pub fn raise() void {
     const ctx = Context.get();
-    if (live == 0) return;
-    const f = ctx.focused orelse return;
-
-    var below = f.node;
     for (ctx.borders.items[0..live]) |bs| {
-        bs.node.placeAbove(below);
-        below = bs.node;
+        bs.node.placeTop();
     }
 }
 

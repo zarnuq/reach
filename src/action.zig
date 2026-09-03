@@ -241,25 +241,63 @@ fn focusStack(dir: i32) void {
     const cur = ctx.focused orelse return;
     if (cur.output != out) return;
 
-    var visible: std.ArrayList(*Window) = .empty;
-    defer visible.deinit(ctx.gpa);
-    for (ctx.windows.items) |w| {
-        if (w.output == out and w.visible() and !w.floating) {
-            visible.append(ctx.gpa, w) catch return;
-        }
-    }
-    if (visible.items.len < 2) return;
+    ctx.focused = nextFocusable(ctx.windows.items, out, cur, dir) orelse return;
+}
 
-    for (visible.items, 0..) |w, i| {
-        if (w == cur) {
-            const next_idx = if (dir > 0)
-                (i + 1) % visible.items.len
-            else
-                (i + visible.items.len - 1) % visible.items.len;
-            ctx.focused = visible.items[next_idx];
-            return;
+/// Find the next visible window on `out` in stack order. Tiled and floating
+/// windows deliberately share one cycle: focus is independent of layout mode,
+/// and stack.apply() raises a floating window when it becomes focused.
+fn nextFocusable(windows: []const *Window, out: *Output, cur: *Window, dir: i32) ?*Window {
+    var current_index: ?usize = null;
+    for (windows, 0..) |w, i| {
+        if (w == cur and w.output == out and w.visible()) {
+            current_index = i;
+            break;
         }
     }
+
+    var index = current_index orelse return null;
+    var remaining = windows.len - 1;
+    while (remaining > 0) : (remaining -= 1) {
+        index = if (dir > 0)
+            (index + 1) % windows.len
+        else if (index == 0)
+            windows.len - 1
+        else
+            index - 1;
+
+        const candidate = windows[index];
+        if (candidate.output == out and candidate.visible()) return candidate;
+    }
+    return null;
+}
+
+test "focus cycling includes floating windows in both directions" {
+    var out = Output{ .rwm = undefined };
+    var tiled_a = Window{ .rwm = undefined, .node = undefined, .output = &out, .mapped = true };
+    var floating = Window{ .rwm = undefined, .node = undefined, .output = &out, .mapped = true, .floating = true };
+    var tiled_b = Window{ .rwm = undefined, .node = undefined, .output = &out, .mapped = true };
+    const windows = [_]*Window{ &tiled_a, &floating, &tiled_b };
+
+    try std.testing.expectEqual(&floating, nextFocusable(&windows, &out, &tiled_a, 1).?);
+    try std.testing.expectEqual(&tiled_b, nextFocusable(&windows, &out, &floating, 1).?);
+    try std.testing.expectEqual(&tiled_a, nextFocusable(&windows, &out, &tiled_b, 1).?);
+    try std.testing.expectEqual(&floating, nextFocusable(&windows, &out, &tiled_b, -1).?);
+    try std.testing.expectEqual(&tiled_b, nextFocusable(&windows, &out, &tiled_a, -1).?);
+}
+
+test "focus cycling skips windows that are not visible on the selected output" {
+    var out = Output{ .rwm = undefined };
+    var other_out = Output{ .rwm = undefined };
+    var current = Window{ .rwm = undefined, .node = undefined, .output = &out, .mapped = true };
+    var unmapped = Window{ .rwm = undefined, .node = undefined, .output = &out, .floating = true };
+    var other_desktop = Window{ .rwm = undefined, .node = undefined, .output = &out, .mapped = true, .desktop = 2, .floating = true };
+    var other_output = Window{ .rwm = undefined, .node = undefined, .output = &other_out, .mapped = true, .floating = true };
+    var target = Window{ .rwm = undefined, .node = undefined, .output = &out, .mapped = true, .floating = true };
+    const windows = [_]*Window{ &current, &unmapped, &other_desktop, &other_output, &target };
+
+    try std.testing.expectEqual(&target, nextFocusable(&windows, &out, &current, 1).?);
+    try std.testing.expectEqual(&target, nextFocusable(&windows, &out, &current, -1).?);
 }
 
 fn adjustMfact(delta: f32) void {

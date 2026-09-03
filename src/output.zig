@@ -55,6 +55,10 @@ pub const Output = struct {
     mfact: f32 = 0.55,
     nmaster: i32 = 1,
 
+    // River window-management v5 reports active capture sessions per output.
+    // Kept as state for a future bar/IPC privacy indicator.
+    capture_sessions: u32 = 0,
+
     // This output's status bar. null when the bar subsystem is disabled
     // (no wl_shm / font failed to load) or if its surfaces couldn't be created.
     bar: ?*bar.Bar = null,
@@ -158,6 +162,7 @@ pub const Output = struct {
                 self.usable_hint = null;
                 log.info("output geometry: {d}x{d} @ ({d},{d})", .{ self.width, self.height, self.x, self.y });
             },
+            .capture_sessions => |ev| self.capture_sessions = ev.count,
             // The numeric name of the wl_output global backing this output. Bind
             // it and listen for its connector-name event so we can order monitors
             // by config.monitors (and so window rules' `monitor` index is stable).

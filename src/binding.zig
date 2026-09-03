@@ -501,5 +501,9 @@ pub fn applySubmap() void {
 fn seatListener(_: *river.XkbBindingsSeatV1, event: river.XkbBindingsSeatV1.Event, _: ?*anyopaque) void {
     switch (event) {
         .ate_unbound_key => requestSubmapExit(),
+        // XKB bindings v3 can report watched modifier transitions. Reach does
+        // not install a watch yet; keep the event explicit for future chord
+        // cancellation rather than silently treating the v3 API as v2.
+        .modifiers_update => {},
     }
 }

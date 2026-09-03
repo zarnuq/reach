@@ -41,6 +41,11 @@ const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
 const Font = @import("render/font.zig");
 
+// Oldest protocol versions compatible with the requests reach makes today.
+// Newer servers are capped to the generated version in registryListener.
+const min_rwm_version = 3; // river_seat_v1.pointer_warp
+const min_xkb_bindings_version = 2; // river_xkb_bindings_v1.get_seat (chords)
+
 /// The objects we bind from the registry (definition + per-field docs live on
 /// `Context.Globals`). `rwm` is optional *here* only because globals arrive
 /// asynchronously; we promote it to non-optional after the initial roundtrip
@@ -194,15 +199,35 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
             } else if (std.mem.orderZ(u8, g.interface, wp.SinglePixelBufferManagerV1.interface.name) == .eq) {
                 globals.wp_single_pixel_buffer_manager = registry.bind(g.name, wp.SinglePixelBufferManagerV1, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, river.WindowManagerV1.interface.name) == .eq) {
-                globals.rwm = registry.bind(g.name, river.WindowManagerV1, 4) catch return;
+                if (g.version < min_rwm_version) {
+                    log.err("river_window_manager_v1 v{d} advertised; reach requires v{d}+", .{ g.version, min_rwm_version });
+                    return;
+                }
+                globals.rwm = registry.bind(
+                    g.name,
+                    river.WindowManagerV1,
+                    @min(g.version, river.WindowManagerV1.generated_version),
+                ) catch return;
             } else if (std.mem.orderZ(u8, g.interface, river.XkbBindingsV1.interface.name) == .eq) {
-                globals.xkb_bindings = registry.bind(g.name, river.XkbBindingsV1, 2) catch return;
+                if (g.version < min_xkb_bindings_version) {
+                    log.warn("river_xkb_bindings_v1 v{d} advertised; reach requires v{d}+", .{ g.version, min_xkb_bindings_version });
+                    return;
+                }
+                globals.xkb_bindings = registry.bind(
+                    g.name,
+                    river.XkbBindingsV1,
+                    @min(g.version, river.XkbBindingsV1.generated_version),
+                ) catch return;
             } else if (std.mem.orderZ(u8, g.interface, river.LayerShellV1.interface.name) == .eq) {
                 globals.layer_shell = registry.bind(g.name, river.LayerShellV1, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, zwlr.OutputManagerV1.interface.name) == .eq) {
                 globals.output_manager = registry.bind(g.name, zwlr.OutputManagerV1, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, river.InputManagerV1.interface.name) == .eq) {
-                globals.input_manager = registry.bind(g.name, river.InputManagerV1, 1) catch return;
+                globals.input_manager = registry.bind(
+                    g.name,
+                    river.InputManagerV1,
+                    @min(g.version, river.InputManagerV1.generated_version),
+                ) catch return;
             }
         },
         // A global went away. We don't track hot-pluggable registry globals, so

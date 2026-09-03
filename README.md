@@ -27,7 +27,8 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
   and `SIGRTMIN+n` signal refresh are supported.
 - **Keybindings + multi-key chords** — arbitrary-depth chord tries built on
   river's submap primitive.
-- **Floating windows** — toggle float, fullscreen, keyboard move/resize.
+- **Floating windows** — toggle float, fullscreen, keyboard move/resize; stack
+  focus cycling includes tiled and floating windows together.
 - **Window rules** — by `app_id`/`title`: force float, assign a desktop, switch to
   it, send to a monitor, set floating geometry.
 - **Monitor configuration** — modes/positions/transforms/scale applied via
@@ -40,8 +41,7 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
   doesn't parse is rejected without disturbing the running session.
 
 Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
-(floating itself works via keyboard, above), a configurable cursor theme, and bar
-desktop clicks.
+(floating itself works via keyboard, above) and bar desktop clicks.
 
 ## Build
 
@@ -50,6 +50,13 @@ desktop clicks.
 Requires **Zig 0.16** and the system `wayland-client`, `pixman`, and `fcft`
 libraries. The first build fetches `zig-wayland`, `zig-pixman`, and `zig-fcft`
 from the network and caches them.
+
+The vendored protocol definitions track river 0.4.8: window management v5, XKB
+bindings v3, and input management v2. Bindings for river's libinput-config v2
+and XKB-config v2 APIs are generated as the base for future device settings;
+reach currently uses input management for keyboard repeat. At runtime, globals
+are capped to the generated version; reach's current feature floor is window
+management v3 and XKB bindings v2.
 
 ```sh
 zig build                 # → zig-out/bin/reach

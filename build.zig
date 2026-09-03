@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) void {
     scanner.addSystemProtocol("stable/viewporter/viewporter.xml");
     scanner.addSystemProtocol("staging/single-pixel-buffer/single-pixel-buffer-v1.xml");
 
-    // Our custom protocols (copied from river/kwm into protocol/).
+    // River v0.4.8 protocols vendored in protocol/.
     scanner.addCustomProtocol(b.path("protocol/river-window-management-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/river-xkb-bindings-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/river-layer-shell-v1.xml"));
@@ -55,12 +55,14 @@ pub fn build(b: *std.Build) void {
     // NOT part of river-window-management — it goes through this sibling river
     // protocol. reach binds it to apply config.repeat_rate/repeat_delay.
     scanner.addCustomProtocol(b.path("protocol/river-input-management-v1.xml"));
+    // Device-specific configuration protocols. Generating these now keeps the
+    // full river 0.4.8 input API available as reach grows beyond repeat settings.
+    scanner.addCustomProtocol(b.path("protocol/river-libinput-config-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/river-xkb-config-v1.xml"));
 
-    // `generate(interface, version)` emits Zig for exactly the interfaces we use,
-    // at the version we request. We only list what milestone 1 needs plus the
-    // core globals we'll reuse soon (compositor/subcompositor/shm for surfaces &
-    // buffers, seat/output because the river protocols reference wl_seat/wl_output
-    // in their events).
+    // `generate(interface, version)` emits Zig at the requested protocol
+    // version. This includes the interfaces reach uses today and river's full
+    // device-configuration surface for future config options.
     scanner.generate("wl_compositor", 4); // wl_surface / wl_region factory
     scanner.generate("wl_subcompositor", 1); // wl_subsurface (border/bar pieces later)
     scanner.generate("wl_shm", 1); // shared-memory buffers (borders + bar later)
@@ -68,11 +70,13 @@ pub fn build(b: *std.Build) void {
     scanner.generate("wl_output", 4); // referenced by river_output_v1.wl_output event
     scanner.generate("wp_viewporter", 1); // scale the 1x1 color buffer to border size
     scanner.generate("wp_single_pixel_buffer_manager_v1", 1); // solid-color buffers
-    scanner.generate("river_window_manager_v1", 4); // THE protocol that drives us
-    scanner.generate("river_xkb_bindings_v1", 2); // keybinds (wired up in M5)
-    scanner.generate("river_layer_shell_v1", 1); // border/bar surfaces (M3/M4)
+    scanner.generate("river_window_manager_v1", 5); // THE protocol that drives us
+    scanner.generate("river_xkb_bindings_v1", 3); // keybindings and chords
+    scanner.generate("river_layer_shell_v1", 1); // border/bar surfaces
     scanner.generate("zwlr_output_manager_v1", 1); // output config (monitors table)
-    scanner.generate("river_input_manager_v1", 1); // input config (keyboard repeat)
+    scanner.generate("river_input_manager_v1", 2); // input config (keyboard repeat)
+    scanner.generate("river_libinput_config_v1", 2); // libinput device settings
+    scanner.generate("river_xkb_config_v1", 2); // keymaps/layout/lock state
 
     // Wrap the generated source as an importable module named "wayland".
     const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
