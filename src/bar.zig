@@ -131,10 +131,11 @@ pub const Bar = struct {
         const gpa = ctx.gpa;
         const out = self.output;
 
-        // A fullscreen window owns the whole output. The bar always placeTop()s, so
-        // it would draw over the fullscreen window — hide it instead (mirrors dwl,
-        // where the bar is hidden on a fullscreen monitor). Detach the buffer once
-        // on the transition; an unmapped surface draws nothing.
+        // A fullscreen window owns the whole output. The bar is the topmost layer
+        // in stack.zig, so it would draw over the fullscreen window — hide it
+        // instead (mirrors dwl, where the bar is hidden on a fullscreen monitor).
+        // Detach the buffer once on the transition; an unmapped surface draws
+        // nothing, and `hidden` is also what makes `raise` skip it.
         if (fullscreenOn(out)) {
             if (!self.hidden) {
                 self.wl_surface.attach(null, 0, 0);
@@ -146,7 +147,12 @@ pub const Bar = struct {
         }
         self.hidden = false;
 
-        const w = out.width;
+        // Span the area no layer surface has claimed, not the raw output: if a
+        // panel reserved the top edge, our bar stacks below it instead of fighting
+        // it for the same pixels. `nonExclusive()` deliberately, not usableArea() —
+        // the latter subtracts this very bar's strip.
+        const area = out.nonExclusive();
+        const w = area.width;
         const h = font.height();
         if (w <= 0 or h <= 0) return;
 
@@ -205,8 +211,16 @@ pub const Bar = struct {
         self.shell.syncNextCommit();
         self.wl_surface.commit();
 
-        const y = out.y + if (config.bar.top) @as(i32, 0) else out.height - h;
-        self.node.setPosition(out.x, y);
+        const uy = out.y + area.y;
+        const y = if (config.bar.top) uy else uy + area.height - h;
+        self.node.setPosition(out.x + area.x, y);
+    }
+
+    /// Lift the bar to the top of the scene. Called from stack.apply(), which owns
+    /// the z-order; a bar hidden by a fullscreen window stays where it is, since an
+    /// unmapped surface draws nothing either way.
+    pub fn raise(self: *Bar) void {
+        if (!enabled or self.hidden) return;
         self.node.placeTop();
     }
 

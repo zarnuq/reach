@@ -266,23 +266,24 @@ pub const Window = struct {
     }
 
     /// RENDER phase: place the node in global coordinates and show it.
+    ///
+    /// Z-order is NOT decided here — stack.apply() runs after every window has been
+    /// through this and orders the whole scene at once. Raising a window from here
+    /// is what made layering depend on the order unrelated files ran in.
     pub fn render(self: *Window) void {
         // Hidden when unmapped, orphaned, or on a desktop the output isn't viewing.
         if (!self.visible()) {
             self.rwm.hide();
             return;
         }
-        // Fullscreen: river positions/sizes the window to the output; we just keep
-        // it on top of the stack and show it.
+        // Fullscreen: river positions/sizes the window to the output, so there is
+        // no geometry for us to set — just show it.
         if (self.fullscreen) {
-            self.node.placeTop();
             self.rwm.show();
             return;
         }
         const out = self.output.?;
         self.node.setPosition(out.x + self.x, out.y + self.y);
-        // Keep floats stacked above the tiled windows.
-        if (self.floating) self.node.placeTop();
         self.rwm.show();
     }
 

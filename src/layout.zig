@@ -16,7 +16,6 @@ const config = @import("config.zig");
 const Context = @import("context.zig");
 const Output = @import("output.zig").Output;
 const Window = @import("window.zig").Window;
-const bar = @import("bar.zig");
 
 /// Lay out the tiled (non-floating) windows that live on `out`.
 pub fn arrange(out: *Output) void {
@@ -39,15 +38,18 @@ pub fn arrange(out: *Output) void {
     const n: i32 = @intCast(tiled.items.len);
     if (n == 0) return;
 
-    // The bar reserves a strip at the top (or bottom) of the output; tiled
-    // windows live in what's left. `oy` is the top edge of the usable area.
-    const bar_h = bar.height();
-    const top_reserve: i32 = if (config.bar.top) bar_h else 0;
-    const oy = config.outer_gap + top_reserve;
-
-    // Usable area inside the outer gap, minus the bar strip.
-    const usable_w = out.width - 2 * config.outer_gap;
-    const usable_h = out.height - 2 * config.outer_gap - bar_h;
+    // What's actually ours to lay out: the output minus every layer surface's
+    // exclusive zone (a panel, a notification daemon, an on-screen keyboard) and
+    // minus reach's own bar strip. See Output.usableArea.
+    //
+    // This is a full RECT, not just a height — a left- or right-anchored panel
+    // shrinks the width and moves the left edge, which is why the origin is
+    // `usable_x`/`usable_y` below rather than a bare `outer_gap`.
+    const area = out.usableArea();
+    const usable_x = area.x + config.outer_gap;
+    const usable_y = area.y + config.outer_gap;
+    const usable_w = area.width - 2 * config.outer_gap;
+    const usable_h = area.height - 2 * config.outer_gap;
     if (usable_w <= 0 or usable_h <= 0) return;
 
     const nmaster = @min(n, out.nmaster);
@@ -70,19 +72,19 @@ pub fn arrange(out: *Output) void {
             // a sliver of background under the column whose height changes with the
             // window count.
             const cell_h = @divFloor(usable_h - (nmaster - 1) * config.inner_gap, nmaster);
-            w.x = config.outer_gap;
-            w.y = oy + i * (cell_h + config.inner_gap);
+            w.x = usable_x;
+            w.y = usable_y + i * (cell_h + config.inner_gap);
             w.width = master_w;
-            w.height = if (i == nmaster - 1) oy + usable_h - w.y else cell_h;
+            w.height = if (i == nmaster - 1) usable_y + usable_h - w.y else cell_h;
         } else {
             // Stack column, split vertically into nstack rows — same remainder
             // rule as the master column above.
             const si = i - nmaster;
             const cell_h = @divFloor(usable_h - (nstack - 1) * config.inner_gap, nstack);
-            w.x = config.outer_gap + master_w + config.inner_gap;
-            w.y = oy + si * (cell_h + config.inner_gap);
+            w.x = usable_x + master_w + config.inner_gap;
+            w.y = usable_y + si * (cell_h + config.inner_gap);
             w.width = stack_w;
-            w.height = if (si == nstack - 1) oy + usable_h - w.y else cell_h;
+            w.height = if (si == nstack - 1) usable_y + usable_h - w.y else cell_h;
         }
         w.width = @max(1, w.width);
         w.height = @max(1, w.height);

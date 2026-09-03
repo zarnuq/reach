@@ -16,6 +16,9 @@ const Context = @import("context.zig");
 const config = @import("config.zig");
 const bar = @import("bar.zig");
 
+/// An output-local rectangle.
+pub const Rect = struct { x: i32 = 0, y: i32 = 0, width: i32 = 0, height: i32 = 0 };
+
 pub const Output = struct {
     rwm: *river.OutputV1,
 
@@ -31,6 +34,18 @@ pub const Output = struct {
     y: i32 = 0,
     width: i32 = 0,
     height: i32 = 0,
+
+    // river's `non_exclusive_area`: what's left of the output after subtracting
+    // every layer surface's exclusive zone. Stored EXACTLY as received — raw, in
+    // GLOBAL coordinates — and converted on demand by `nonExclusive()`.
+    //
+    // Kept raw on purpose. Converting here would need `x`/`y`/`width`/`height`,
+    // and river makes no promise that `position`/`dimensions` arrive before this
+    // event on a fresh output; converting eagerly against a still-zero geometry
+    // would silently discard the hint, and river has no reason to resend it.
+    //
+    // null = never received one, so the whole output is ours.
+    usable_hint: ?Rect = null,
 
     // The virtual desktop this output is currently showing (1-based; see
     // config.desktops). Exactly one, always — there is no empty view.
@@ -54,6 +69,54 @@ pub const Output = struct {
     // open on the focused monitor rather than river's fallback (the first output).
     layer_output: ?*river.LayerShellOutputV1 = null,
 
+    /// The part of this output no layer surface has claimed, output-local: the
+    /// raw `non_exclusive_area` hint translated out of global coordinates and
+    /// clipped to our own bounds. The whole output when no hint has arrived, so a
+    /// compositor that never sends one behaves exactly as it did before.
+    ///
+    /// This does NOT subtract reach's own bar — the bar spans this area, so it
+    /// needs the value before its own strip is taken out. For laying windows out,
+    /// use `usableArea()`.
+    pub fn nonExclusive(self: *const Output) Rect {
+        const hint = self.usable_hint orelse
+            return .{ .x = 0, .y = 0, .width = self.width, .height = self.height };
+
+        // Global → output-local, then clipped. The clip is what makes a stale hint
+        // (one describing a resolution we've since left) safe rather than a way to
+        // put windows off-screen.
+        var x = hint.x - self.x;
+        var y = hint.y - self.y;
+        var w = hint.width;
+        var h = hint.height;
+        if (x < 0) {
+            w += x;
+            x = 0;
+        }
+        if (y < 0) {
+            h += y;
+            y = 0;
+        }
+        if (x + w > self.width) w = self.width - x;
+        if (y + h > self.height) h = self.height - y;
+
+        return .{ .x = x, .y = y, .width = @max(0, w), .height = @max(0, h) };
+    }
+
+    /// The part of this output available to the window layout, output-local:
+    /// `nonExclusive()` minus the strip reach's own bar sits in.
+    ///
+    /// The bar is subtracted HERE rather than by river because it is a
+    /// river_shell_surface_v1, not a layer surface — river's hint only accounts for
+    /// layer surfaces' exclusive zones, so it has no idea the bar is there. Both
+    /// layout.zig and border.zig go through this so the two can't drift.
+    pub fn usableArea(self: *const Output) Rect {
+        const bar_h = bar.height();
+        var r = self.nonExclusive();
+        if (config.bar.top) r.y += bar_h;
+        r.height -= bar_h;
+        return r;
+    }
+
     pub fn create(rwm: *river.OutputV1) !*Output {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Output);
@@ -65,9 +128,10 @@ pub const Output = struct {
                 log.warn("get layer_shell output failed: {}", .{err});
                 break :blk null;
             };
-            // We don't act on its events (non_exclusive_area); the bar reserves a
-            // fixed strip. A no-op listener keeps the dispatcher happy.
-            if (self.layer_output) |lo| lo.setListener(?*anyopaque, layerOutputListener, null);
+            // Its `non_exclusive_area` event is how a layer surface's exclusive
+            // zone reaches the layout — river can't honor a zone itself, since it
+            // doesn't place windows. See layerOutputListener.
+            if (self.layer_output) |lo| lo.setListener(*Output, layerOutputListener, self);
         }
 
         if (bar.enabled) {
@@ -91,6 +155,12 @@ pub const Output = struct {
             .dimensions => |ev| {
                 self.width = ev.width;
                 self.height = ev.height;
+                // The hint we hold describes the OLD resolution, so drop it and use
+                // the whole output until river sends a fresh one. Falling back this
+                // way can briefly let a window sit under a panel; the opposite error
+                // — keeping a rect measured against a bigger screen — strands
+                // windows in a sliver of the new one.
+                self.usable_hint = null;
                 log.info("output geometry: {d}x{d} @ ({d},{d})", .{ self.width, self.height, self.x, self.y });
             },
             // The numeric name of the wl_output global backing this output. Bind
@@ -193,10 +263,30 @@ pub fn reorder() void {
     std.sort.insertion(*Output, ctx.outputs.items, {}, rankLessThan);
 }
 
-/// We ignore river_layer_shell_output_v1 events (non_exclusive_area); the bar
-/// reserves a fixed strip rather than honoring the exclusive zone.
+/// river_layer_shell_output_v1 listener — the exclusive-zone hint.
+///
+/// A layer-shell client (a quickshell panel, waybar, an on-screen keyboard) asks
+/// for space with `exclusive_zone`. river places the surface itself, but it cannot
+/// keep the space clear, because in river's non-monolithic split the WM is what
+/// lays windows out. So river subtracts every layer surface's zone from the output
+/// and hands us the remainder here. Ignoring this event is what makes exclusive
+/// zones silently non-functional — the panel draws, and windows tile underneath it.
+///
+/// The protocol sends this in GLOBAL coordinates and guarantees a manage_start
+/// follows, so storing the rect is enough; the layout re-runs on its own.
 fn layerOutputListener(
     _: *river.LayerShellOutputV1,
-    _: river.LayerShellOutputV1.Event,
-    _: ?*anyopaque,
-) void {}
+    event: river.LayerShellOutputV1.Event,
+    self: *Output,
+) void {
+    switch (event) {
+        // Stashed raw; `nonExclusive()` does the global→local conversion, so this
+        // does not care whether our own geometry has arrived yet.
+        .non_exclusive_area => |ev| self.usable_hint = .{
+            .x = ev.x,
+            .y = ev.y,
+            .width = ev.width,
+            .height = ev.height,
+        },
+    }
+}

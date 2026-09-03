@@ -19,6 +19,7 @@ const river = wayland.client.river;
 const Context = @import("context.zig");
 const layout = @import("layout.zig");
 const border = @import("border.zig");
+const stack = @import("stack.zig");
 const binding = @import("binding.zig");
 const status = @import("status.zig");
 const shake = @import("shake.zig");
@@ -168,7 +169,13 @@ fn manageCycle() void {
     shake.applyPending();
 }
 
-/// RENDER: position and show every window, draw the tmux borders, then the bars.
+/// RENDER: position and show every window, draw the tmux borders and the bars,
+/// then order the scene.
+///
+/// Content first, z-order last, and deliberately separate: what a thing looks like
+/// and what it sits in front of are independent questions, and folding the second
+/// into the first is what made layering fall out of the order these calls happen to
+/// run in. stack.apply() is the only thing here with an opinion about depth.
 fn renderCycle() void {
     const ctx = Context.get();
     for (ctx.windows.items) |w| w.render();
@@ -176,6 +183,7 @@ fn renderCycle() void {
     for (ctx.outputs.items) |o| {
         if (o.bar) |b| b.render();
     }
+    stack.apply();
 }
 
 // ---------------------------------------------------------------------------

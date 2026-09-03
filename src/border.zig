@@ -39,7 +39,6 @@ const river = wayland.client.river;
 
 const config = @import("config.zig");
 const Context = @import("context.zig");
-const bar = @import("bar.zig");
 const Output = @import("output.zig").Output;
 const Window = @import("window.zig").Window;
 
@@ -67,7 +66,9 @@ pub const BorderSurface = struct {
     }
 
     /// Show this border at global (gx, gy) with size (w, h) in `color` (0xRRGGBB).
-    /// Placed above the windows. Must be called inside a render sequence.
+    /// Must be called inside a render sequence. Does NOT place the node — `update`
+    /// stacks every visible border in one pass afterwards, anchored to the window
+    /// they decorate.
     fn show(self: *BorderSurface, gx: i32, gy: i32, w: i32, h: i32, color: u32) void {
         const ctx = Context.get();
         if (w <= 0 or h <= 0) {
@@ -90,7 +91,6 @@ pub const BorderSurface = struct {
         self.surface.commit();
 
         self.node.setPosition(gx, gy);
-        self.node.placeTop();
         self.visible = true;
     }
 
@@ -127,6 +127,38 @@ pub fn update() void {
 
     // Hide any pooled surfaces we didn't use this frame.
     for (ctx.borders.items[used..]) |bs| bs.hide();
+
+    // Remembered for restack(), which runs later in the render cycle.
+    live = used;
+}
+
+/// How many pooled surfaces the last `update` left visible. `restack` needs it and
+/// runs separately, so it can't just take the count as an argument.
+var live: usize = 0;
+
+/// Stack this frame's border lines, called from stack.apply().
+///
+/// The lines go DIRECTLY above the window they decorate rather than at the top of
+/// the scene. place_top here was the bug: it put every line above every window, so
+/// focusing a tiled window that sat behind a floating one painted its border
+/// straight across the float, which is stacked above it. Anchoring to the focused
+/// window covers both shapes with one rule — a tiled window's gutter lines clear
+/// its tiled neighbours but stay under any float, while a focused float's ring is
+/// inset over that float's own edge pixels and so must sit above it to be seen.
+///
+/// CHAINED, not all anchored to the window: place_above inserts DIRECTLY above its
+/// argument, so re-using a single anchor would stack them in reverse and bury the
+/// active lines under the inactive ones `update` drew before them.
+pub fn restack() void {
+    const ctx = Context.get();
+    if (live == 0) return;
+    const f = ctx.focused orelse return;
+
+    var below = f.node;
+    for (ctx.borders.items[0..live]) |bs| {
+        bs.node.placeAbove(below);
+        below = bs.node;
+    }
 }
 
 /// Draw `rects` (output-local) in `color`, continuing the frame's surface
@@ -258,13 +290,12 @@ fn focusedLines() ?Lines {
         // TOP half when it is the master (left, cidx 0), BOTTOM when it is the
         // stack (right, cidx 1).
         //
-        // Only this case and its stacked twin need the usable area (output-local,
-        // matching layout.zig, bar strip included), so it is worked out here rather
-        // than every frame.
-        const bar_h = bar.height();
-        const top_reserve: i32 = if (config.bar.top) bar_h else 0;
-        const uy = config.outer_gap + top_reserve;
-        const uh = out.height - 2 * config.outer_gap - bar_h;
+        // Only this case and its stacked twin need the usable area, so it is worked
+        // out here rather than every frame. It MUST match what layout.arrange used,
+        // so it comes from the same Output.usableArea — exclusive zones included.
+        const area = out.usableArea();
+        const uy = area.y + config.outer_gap;
+        const uh = area.height - 2 * config.outer_gap;
 
         const x = if (cidx == 1) f.x - t else f.x + f.width;
         const mid = uy + @divFloor(uh, 2);
@@ -274,9 +305,11 @@ fn focusedLines() ?Lines {
     } else if (nmaster != 1 and total == 2) {
         // Two panes stacked: one full-width divider on the focused pane's facing
         // edge, cut in half — LEFT or RIGHT half active depending on which pane is
-        // focused. The bar reserves no width, so only the outer gap matters here.
-        const ux = config.outer_gap;
-        const uw = out.width - 2 * config.outer_gap;
+        // focused. Same usable area as above — a side-anchored panel moves the left
+        // edge and shrinks the width, so this can't just be `outer_gap`.
+        const area = out.usableArea();
+        const ux = area.x + config.outer_gap;
+        const uw = area.width - 2 * config.outer_gap;
 
         const y = if (cidx == 1) f.y - t else f.y + f.height;
         const mid = ux + @divFloor(uw, 2);
