@@ -11,24 +11,22 @@
 // wants to drive the WM (a bar's desktop click, an IPC socket) needs exactly this
 // half and none of the xkb plumbing.
 //
-// The split runs one way in spirit and both ways in code: binding.zig maps keys to
-// an Action and calls `execute`; this file reaches back only for the chord submaps,
-// since entering one IS a keybinding concept that happens to be spelled as an
-// action (`Action.enter_submap`).
+// The dependency runs in one direction: binding.zig maps keys to an Action and
+// calls `execute`. Keyboard-only state such as chord submaps stays in binding.zig,
+// so actions can also be used by future inputs such as bar clicks or IPC without
+// depending on xkb plumbing.
 //
 // TIMING, and why almost nothing here defers: river guarantees a `pressed` event is
 // followed by a manage_start, so mutating state in an action is enough — the layout
-// and render re-run on their own. The exceptions are the three things that must
+// and render re-run on their own. The exceptions are the two things that must
 // happen inside a specific sequence and so only get *requested* here: a config
-// reload (reload.request), a submap change (binding.requestSubmapEnter) and a
-// cursor warp (requestWarp).
+// reload (reload.request) and a cursor warp (requestWarp).
 
 const std = @import("std");
 
 const config = @import("config.zig");
 const confparse = @import("confparse.zig");
 const reload = @import("reload.zig");
-const binding = @import("binding.zig");
 const Context = @import("context.zig");
 const Output = @import("output.zig").Output;
 const query = @import("query.zig");
@@ -44,10 +42,6 @@ pub const Action = union(enum) {
     send: u32,
     // Spawn - single shell command string
     spawn: [:0]const u8,
-    // Enter a two-key chord submap (dwl SPAWN2): the leader arms `chord`, whose
-    // sub-bindings become live until the next key resolves them. See the submap
-    // machinery near the bottom of this file.
-    enter_submap: *binding.Chord,
     // Window management
     quit,
     killclient,
@@ -93,6 +87,18 @@ pub fn toAction(a: confparse.ActionSpec) Action {
     };
 }
 
+test "config action conversion preserves payloads" {
+    const view = toAction(.{ .view = 4 });
+    try std.testing.expectEqual(@as(u32, 4), view.view);
+
+    const move = toAction(.{ .move = .{ .x = -12, .y = 7 } });
+    try std.testing.expectEqual(@as(i32, -12), move.move.x);
+    try std.testing.expectEqual(@as(i32, 7), move.move.y);
+
+    const mfact = toAction(.{ .setmfact = 0.05 });
+    try std.testing.expectEqual(@as(f32, 0.05), mfact.setmfact);
+}
+
 // ---------------------------------------------------------------------------
 // Execution
 // ---------------------------------------------------------------------------
@@ -129,8 +135,6 @@ pub fn execute(action: Action) void {
         // from the manage cycle that river guarantees follows this press, by
         // which point this Binding is no longer on the stack and can be freed.
         .reload => reload.request(),
-        // Arm a two-key chord submap.
-        .enter_submap => |chord| binding.requestSubmapEnter(chord),
         // Window management
         .quit => {
             ctx.running = false;
@@ -195,6 +199,13 @@ pub fn execute(action: Action) void {
 /// invalid; the upper bound is `config.desktops.count`.
 fn validDesktop(d: u32) bool {
     return d >= 1 and d <= config.desktops.count;
+}
+
+test "desktop validation uses one-based bounds" {
+    try std.testing.expect(!validDesktop(0));
+    try std.testing.expect(validDesktop(1));
+    try std.testing.expect(validDesktop(config.desktops.count));
+    try std.testing.expect(!validDesktop(config.desktops.count + 1));
 }
 
 /// Ensure focus lands on a window that's actually visible on `out` after a view

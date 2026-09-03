@@ -65,9 +65,8 @@ const C = struct {
 /// A pixel delta for floating move/resize actions.
 pub const DeltaSpec = struct { x: i32 = 0, y: i32 = 0 };
 
-/// What a bind does. Mirrors binding.Action MINUS `enter_submap` (chords are
-/// expressed structurally via KeySpec.chord, not as an opaque pointer). binding.zig
-/// maps this onto its real Action union.
+/// What a bind does. Mirrors action.Action; chords are expressed structurally via
+/// KeySpec.chord and remain an implementation detail of binding.zig.
 pub const ActionSpec = union(enum) {
     view: u32,
     send: u32,

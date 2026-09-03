@@ -86,33 +86,35 @@ pub fn build(b: *std.Build) void {
     // ----------------------------------------------------------------------
     // 2. The executable
     // ----------------------------------------------------------------------
-    const exe = b.addExecutable(.{
-        .name = "reach",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            // libc is required because the Wayland bindings call into the C
-            // `libwayland-client` library.
-            .link_libc = true,
-            // Modules importable from src/ via `@import("wayland")`.
-            .imports = &.{
-                .{ .name = "wayland", .module = wayland_mod },
-                .{ .name = "pixman", .module = pixman_mod },
-                .{ .name = "fcft", .module = fcft_mod },
-            },
-        }),
+    const root_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        // libc is required because the Wayland bindings call into the C
+        // `libwayland-client` library.
+        .link_libc = true,
+        // Modules importable from src/ via `@import("wayland")`.
+        .imports = &.{
+            .{ .name = "wayland", .module = wayland_mod },
+            .{ .name = "pixman", .module = pixman_mod },
+            .{ .name = "fcft", .module = fcft_mod },
+        },
     });
 
     // The actual C libraries behind the generated bindings.
-    exe.root_module.linkSystemLibrary("wayland-client", .{});
+    root_mod.linkSystemLibrary("wayland-client", .{});
     // M4 bar: pixman (compositing) + fcft (font rasterization). Both are found
     // via pkg-config inside the Nix dev shell.
-    exe.root_module.linkSystemLibrary("pixman-1", .{});
-    exe.root_module.linkSystemLibrary("fcft", .{});
+    root_mod.linkSystemLibrary("pixman-1", .{});
+    root_mod.linkSystemLibrary("fcft", .{});
     // xkbcommon: resolve xkb keysym NAMES from config.zon binds ("Return", "q",
     // "XF86AudioPlay", …) into keysym codes via xkb_keysym_from_name (binding.zig).
-    exe.root_module.linkSystemLibrary("xkbcommon", .{});
+    root_mod.linkSystemLibrary("xkbcommon", .{});
+
+    const exe = b.addExecutable(.{
+        .name = "reach",
+        .root_module = root_mod,
+    });
 
     // `zig build` installs this into zig-out/bin/reach.
     b.installArtifact(exe);
@@ -123,4 +125,11 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     const run_step = b.step("run", "Build and run reach");
     run_step.dependOn(&run_cmd.step);
+
+    // `zig build test` — run unit tests discovered in main.zig's import tree
+    // with the same generated protocols, dependencies and target as the binary.
+    const unit_tests = b.addTest(.{ .root_module = root_mod });
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_unit_tests.step);
 }

@@ -179,7 +179,10 @@ pub const Output = struct {
                 // on this output don't go dark when another monitor still exists.
                 var fallback: ?*Output = null;
                 for (ctx.outputs.items) |o| {
-                    if (o != self) { fallback = o; break; }
+                    if (o != self) {
+                        fallback = o;
+                        break;
+                    }
                 }
                 for (ctx.windows.items) |w| {
                     if (w.output == self) w.output = fallback;

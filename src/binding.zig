@@ -74,30 +74,41 @@ const XKB_KEY_XF86AudioNext = 0x1008ff17;
 
 const digit_keysym = [9]u32{ '1', '2', '3', '4', '5', '6', '7', '8', '9' };
 
-/// One live keybinding: the river object plus the action to run on press.
+/// What a key press does at the binding layer. Chord transitions deliberately
+/// live here instead of in action.Action: entering a submap is keyboard plumbing,
+/// not a window-manager operation.
+const Target = union(enum) {
+    action: action.Action,
+    submap: *Chord,
+};
+
+/// One live keybinding: the river object plus the target to run on press.
 pub const Binding = struct {
     rwm: *river.XkbBindingV1,
-    action: action.Action,
+    target: Target,
 
     /// Listener for top-level bindings (always-enabled).
     fn listener(_: *river.XkbBindingV1, event: river.XkbBindingV1.Event, self: *Binding) void {
         switch (event) {
-            .pressed => action.execute(self.action),
+            .pressed => switch (self.target) {
+                .action => |act| action.execute(act),
+                .submap => |chord| requestSubmapEnter(chord),
+            },
             else => {},
         }
     }
 
     /// Listener for a chord's sub-binding. A terminal key runs its action and
     /// closes the chord; a key that descends into a deeper submap
-    /// (`.enter_submap`) transitions instead of closing — `applySubmap` swaps the
-    /// active node, keeping us inside the chord. This is what makes chords of any
-    /// depth work (dwl's `keys[5]`), not just two keys.
+    /// (`.submap`) transitions instead of closing — `applySubmap` swaps the active
+    /// node, keeping us inside the chord. This is what makes chords of any depth
+    /// work (dwl's `keys[5]`), not just two keys.
     fn subListener(_: *river.XkbBindingV1, event: river.XkbBindingV1.Event, self: *Binding) void {
         switch (event) {
-            .pressed => switch (self.action) {
-                .enter_submap => |child| requestSubmapEnter(child),
-                else => {
-                    action.execute(self.action);
+            .pressed => switch (self.target) {
+                .submap => |child| requestSubmapEnter(child),
+                .action => |act| {
+                    action.execute(act);
                     requestSubmapExit();
                 },
             },
@@ -109,9 +120,9 @@ pub const Binding = struct {
 /// A node in the chord trie (dwl `Keychord`). The node that owns it is entered by
 /// a leader/parent key; `subs` are the next-level keys, each created DISABLED and
 /// only enabled while THIS node is the active submap. A sub may be terminal (its
-/// action runs and the chord closes) or itself descend into a deeper node (action
-/// `.enter_submap`), so chords nest to arbitrary depth.
-pub const Chord = struct {
+/// action runs and the chord closes) or itself descend into a deeper node (target
+/// `.submap`), so chords nest to arbitrary depth.
+const Chord = struct {
     subs: std.ArrayList(*Binding) = .empty,
 };
 
@@ -179,7 +190,7 @@ pub fn registerForSeat(seat: *Seat) void {
 fn registerSpecBind(xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeySpec) void {
     const kc = parseKey(spec.key) orelse return; // parseKey logs the reason
     if (spec.chord.len != 0) {
-        const chord = addChord(xkb, seat, kc.keysym, kc.mods);
+        const chord = addChord(xkb, seat, kc.keysym, kc.mods) orelse return;
         for (spec.chord) |sub| registerSpecSub(chord, xkb, seat, sub);
     } else if (spec.action) |a| {
         add(xkb, seat, kc.keysym, kc.mods, action.toAction(a));
@@ -192,10 +203,10 @@ fn registerSpecBind(xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeyS
 fn registerSpecSub(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeySpec) void {
     const kc = parseKey(spec.key) orelse return;
     if (spec.chord.len != 0) {
-        const child = addSubChord(chord, xkb, seat, kc.keysym, kc.mods);
+        const child = addSubChord(chord, xkb, seat, kc.keysym, kc.mods) orelse return;
         for (spec.chord) |sub| registerSpecSub(child, xkb, seat, sub);
     } else if (spec.action) |a| {
-        addSub(chord, xkb, seat, kc.keysym, kc.mods, action.toAction(a));
+        _ = addSub(chord, xkb, seat, kc.keysym, kc.mods, .{ .action = action.toAction(a) });
     }
 }
 
@@ -257,6 +268,21 @@ fn applyMod(mods: *Mods, name: []const u8) bool {
     return true;
 }
 
+test "key combinations resolve modifier aliases and keysyms" {
+    const combo = parseKey("Super+Shift+q") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(combo.mods.mod4);
+    try std.testing.expect(combo.mods.shift);
+    try std.testing.expectEqual(@as(u32, 'q'), combo.keysym);
+
+    const named = parseKey(" Ctrl + plus ") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(named.mods.ctrl);
+    try std.testing.expectEqual(@as(u32, '+'), named.keysym);
+}
+
+test "unknown modifier is rejected" {
+    try std.testing.expect(parseKey("Hyper+q") == null);
+}
+
 /// The compiled-in fallback keymap, used only when config.zon supplies no `binds`.
 /// Deliberately MINIMAL and generic — a terminal plus core window management, with
 /// no references to specific apps — so a bare install (or zero-config run from the
@@ -311,8 +337,7 @@ pub fn teardown() void {
     pending_exit = false;
 
     for (list.items) |b| {
-        b.rwm.destroy();
-        ctx.gpa.destroy(b);
+        destroyBinding(b);
     }
     list.clearRetainingCapacity();
     enable_from = 0;
@@ -321,8 +346,7 @@ pub fn teardown() void {
     // destroyed here, node by node.
     for (chords.items) |c| {
         for (c.subs.items) |b| {
-            b.rwm.destroy();
-            ctx.gpa.destroy(b);
+            destroyBinding(b);
         }
         c.subs.deinit(ctx.gpa);
         ctx.gpa.destroy(c);
@@ -345,66 +369,94 @@ pub fn enablePending() void {
 }
 
 fn add(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, act: action.Action) void {
+    _ = addTopLevel(xkb, seat, keysym, mods, .{ .action = act });
+}
+
+/// Create and retain a top-level binding. It starts disabled and is enabled by
+/// enablePending() during the next manage sequence.
+fn addTopLevel(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, target: Target) bool {
     const ctx = Context.get();
-    const rwm = xkb.getXkbBinding(seat.rwm, keysym, mods) catch |err| {
-        log.err("getXkbBinding failed: {}", .{err});
-        return;
+    const b = createBinding(xkb, seat, keysym, mods, target) orelse return false;
+    list.append(ctx.gpa, b) catch {
+        destroyBinding(b);
+        return false;
     };
-    const b = ctx.gpa.create(Binding) catch {
-        rwm.destroy();
-        return;
-    };
-    b.* = .{ .rwm = rwm, .action = act };
-    rwm.setListener(*Binding, Binding.listener, b);
-    list.append(ctx.gpa, b) catch {};
+    b.rwm.setListener(*Binding, Binding.listener, b);
+    return true;
 }
 
 // ---------------------------------------------------------------------------
 // Chords (two-key submaps)
 // ---------------------------------------------------------------------------
 
-/// Allocate a chord node.
-fn newChord() *Chord {
+/// Allocate and retain a chord node.
+fn newChord() ?*Chord {
     const ctx = Context.get();
-    const chord = ctx.gpa.create(Chord) catch @panic("OOM creating chord");
+    const chord = ctx.gpa.create(Chord) catch return null;
     chord.* = .{};
-    chords.append(ctx.gpa, chord) catch {};
+    chords.append(ctx.gpa, chord) catch {
+        ctx.gpa.destroy(chord);
+        return null;
+    };
     return chord;
 }
 
 /// Create a top-level chord leader: a normal, always-enabled binding on
 /// (keysym, mods) whose action arms the returned (initially empty) root submap.
 /// Add keys to it with `addSub` (terminal) or `addSubChord` (deeper level).
-fn addChord(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods) *Chord {
-    const chord = newChord();
-    add(xkb, seat, keysym, mods, .{ .enter_submap = chord });
+fn addChord(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods) ?*Chord {
+    const chord = newChord() orelse return null;
+    if (!addTopLevel(xkb, seat, keysym, mods, .{ .submap = chord })) return null;
     return chord;
 }
 
 /// Add a key to `chord` whose action runs the next-level submap, returning that
 /// child node so you can keep adding to it. This is how chords go past two keys.
-fn addSubChord(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods) *Chord {
-    const child = newChord();
-    addSub(chord, xkb, seat, keysym, mods, .{ .enter_submap = child });
+fn addSubChord(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods) ?*Chord {
+    const child = newChord() orelse return null;
+    if (!addSub(chord, xkb, seat, keysym, mods, .{ .submap = child })) return null;
     return child;
 }
 
 /// Add a key to a chord node. The binding is created DISABLED (never put in
 /// `list`, never `enable()`d here); `applySubmap` toggles it as the node's submap
 /// opens and closes, so it can't trigger except while that node is active.
-fn addSub(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, act: action.Action) void {
+fn addSub(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, target: Target) bool {
+    const ctx = Context.get();
+    const b = createBinding(xkb, seat, keysym, mods, target) orelse return false;
+    chord.subs.append(ctx.gpa, b) catch {
+        destroyBinding(b);
+        return false;
+    };
+    b.rwm.setListener(*Binding, Binding.subListener, b);
+    return true;
+}
+
+/// Allocate one binding and its protocol object. The caller owns the result and
+/// must either retain it in `list`/a chord or destroy it with destroyBinding().
+fn createBinding(
+    xkb: *river.XkbBindingsV1,
+    seat: *Seat,
+    keysym: u32,
+    mods: Mods,
+    target: Target,
+) ?*Binding {
     const ctx = Context.get();
     const rwm = xkb.getXkbBinding(seat.rwm, keysym, mods) catch |err| {
-        log.err("getXkbBinding (sub) failed: {}", .{err});
-        return;
+        log.err("getXkbBinding failed: {}", .{err});
+        return null;
     };
     const b = ctx.gpa.create(Binding) catch {
         rwm.destroy();
-        return;
+        return null;
     };
-    b.* = .{ .rwm = rwm, .action = act };
-    rwm.setListener(*Binding, Binding.subListener, b);
-    chord.subs.append(ctx.gpa, b) catch {};
+    b.* = .{ .rwm = rwm, .target = target };
+    return b;
+}
+
+fn destroyBinding(b: *Binding) void {
+    b.rwm.destroy();
+    Context.get().gpa.destroy(b);
 }
 
 /// Ask to arm `chord`'s submap on the next manage cycle. Called from a leader's

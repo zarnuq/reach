@@ -43,11 +43,9 @@ Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
 (floating itself works via keyboard, above), a configurable cursor theme, and bar
 desktop clicks.
 
-See `CLAUDE.md` for the full architecture notes, gotchas, and the source map.
-
 ## Build
 
-[link text](https://github.com/zarnuq/gentoo-overlay)
+[Gentoo overlay](https://github.com/zarnuq/gentoo-overlay)
 
 Requires **Zig 0.16** and the system `wayland-client`, `pixman`, and `fcft`
 libraries. The first build fetches `zig-wayland`, `zig-pixman`, and `zig-fcft`
@@ -55,6 +53,7 @@ from the network and caches them.
 
 ```sh
 zig build                 # → zig-out/bin/reach
+zig build test            # run unit tests
 ```
 
 Build with **plain `zig build`**: reach links the *system* `wayland`/`pixman`/

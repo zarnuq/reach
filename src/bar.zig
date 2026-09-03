@@ -223,7 +223,6 @@ pub const Bar = struct {
         if (!enabled or self.hidden) return;
         self.node.placeTop();
     }
-
 };
 
 /// Parse and draw the someblocks status text into the right end of the bar.
@@ -232,83 +231,83 @@ pub const Bar = struct {
 /// app_id just left of it; returns `w` (the right edge) when there's no status.
 fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman.Color) i32 {
     const ctx = Context.get();
-        const gpa = ctx.gpa;
-        const text = status.text();
-        if (text.len == 0) return w;
+    const gpa = ctx.gpa;
+    const text = status.text();
+    if (text.len == 0) return w;
 
-        const default_fg = config.bar.status_fg;
+    const default_fg = config.bar.status_fg;
 
-        // Cleaned text (escapes stripped) + the color runs over it.
-        var cleaned: std.ArrayList(u8) = .empty;
-        defer cleaned.deinit(gpa);
-        const Seg = struct { color: u32, start: usize, len: usize };
-        var segs: std.ArrayList(Seg) = .empty;
-        defer segs.deinit(gpa);
+    // Cleaned text (escapes stripped) + the color runs over it.
+    var cleaned: std.ArrayList(u8) = .empty;
+    defer cleaned.deinit(gpa);
+    const Seg = struct { color: u32, start: usize, len: usize };
+    var segs: std.ArrayList(Seg) = .empty;
+    defer segs.deinit(gpa);
 
-        var cur_color = default_fg;
-        var seg_start: usize = 0;
-        var i: usize = 0;
-        while (i < text.len) {
-            if (text[i] == '^') {
-                // `^^` → a literal caret.
-                if (i + 1 < text.len and text[i + 1] == '^') {
-                    cleaned.append(gpa, '^') catch return w;
-                    i += 2;
-                    continue;
-                }
-                // `^name(arg)` command. Close the current run at this boundary.
-                if (cleaned.items.len > seg_start) {
-                    segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return w;
-                }
-                const name_start = i + 1;
-                const open = std.mem.indexOfScalarPos(u8, text, name_start, '(') orelse break;
-                const close = std.mem.indexOfScalarPos(u8, text, open + 1, ')') orelse break;
-                const name = text[name_start..open];
-                const arg = text[open + 1 .. close];
-                if (std.mem.eql(u8, name, "fg")) {
-                    cur_color = parseColor(arg) orelse default_fg;
-                }
-                // ^bg(...), ^lm(...), ^mm, ^rm, … : not handled yet, just skipped.
-                seg_start = cleaned.items.len;
-                i = close + 1;
-            } else {
-                cleaned.append(gpa, text[i]) catch return w;
-                i += 1;
-            }
-        }
-        if (cleaned.items.len > seg_start) {
-            segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return w;
-        }
-        if (segs.items.len == 0) return w;
-
-        // Rasterize each run and measure the total width.
-        const Run = struct { color: pixman.Color, run: *const fcft.TextRun };
-        var runs: std.ArrayList(Run) = .empty;
-        defer {
-            for (runs.items) |r| r.run.destroy();
-            runs.deinit(gpa);
-        }
-        var total: i32 = 0;
-        for (segs.items) |s| {
-            const slice = cleaned.items[s.start .. s.start + s.len];
-            const run = font.rasterize(gpa, slice) orelse continue;
-            total += @intCast(utils.textWidth(run));
-            runs.append(gpa, .{ .color = utils.color((s.color << 8) | 0xff), .run = run }) catch {
-                run.destroy();
+    var cur_color = default_fg;
+    var seg_start: usize = 0;
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '^') {
+            // `^^` → a literal caret.
+            if (i + 1 < text.len and text[i + 1] == '^') {
+                cleaned.append(gpa, '^') catch return w;
+                i += 2;
                 continue;
-            };
+            }
+            // `^name(arg)` command. Close the current run at this boundary.
+            if (cleaned.items.len > seg_start) {
+                segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return w;
+            }
+            const name_start = i + 1;
+            const open = std.mem.indexOfScalarPos(u8, text, name_start, '(') orelse break;
+            const close = std.mem.indexOfScalarPos(u8, text, open + 1, ')') orelse break;
+            const name = text[name_start..open];
+            const arg = text[open + 1 .. close];
+            if (std.mem.eql(u8, name, "fg")) {
+                cur_color = parseColor(arg) orelse default_fg;
+            }
+            // ^bg(...), ^lm(...), ^mm, ^rm, … : not handled yet, just skipped.
+            seg_start = cleaned.items.len;
+            i = close + 1;
+        } else {
+            cleaned.append(gpa, text[i]) catch return w;
+            i += 1;
         }
-        if (runs.items.len == 0) return w;
+    }
+    if (cleaned.items.len > seg_start) {
+        segs.append(gpa, .{ .color = cur_color, .start = seg_start, .len = cleaned.items.len - seg_start }) catch return w;
+    }
+    if (segs.items.len == 0) return w;
 
-        // Right-align, but never left of the title start.
-        var x = @max(min_x, w - total - pad);
-        const left = x;
-        fillRect(buffer, x, 0, w - x, font.height(), bg);
-        x += @divFloor(pad, 2);
-        for (runs.items) |r| {
-            x += font.renderRun(buffer, r.run, &r.color, x, 0);
-        }
-        return left;
+    // Rasterize each run and measure the total width.
+    const Run = struct { color: pixman.Color, run: *const fcft.TextRun };
+    var runs: std.ArrayList(Run) = .empty;
+    defer {
+        for (runs.items) |r| r.run.destroy();
+        runs.deinit(gpa);
+    }
+    var total: i32 = 0;
+    for (segs.items) |s| {
+        const slice = cleaned.items[s.start .. s.start + s.len];
+        const run = font.rasterize(gpa, slice) orelse continue;
+        total += @intCast(utils.textWidth(run));
+        runs.append(gpa, .{ .color = utils.color((s.color << 8) | 0xff), .run = run }) catch {
+            run.destroy();
+            continue;
+        };
+    }
+    if (runs.items.len == 0) return w;
+
+    // Right-align, but never left of the title start.
+    var x = @max(min_x, w - total - pad);
+    const left = x;
+    fillRect(buffer, x, 0, w - x, font.height(), bg);
+    x += @divFloor(pad, 2);
+    for (runs.items) |r| {
+        x += font.renderRun(buffer, r.run, &r.color, x, 0);
+    }
+    return left;
 }
 
 /// Draw the desktop cells on the left of `out`'s bar and return the x where the
