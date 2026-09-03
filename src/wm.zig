@@ -21,6 +21,7 @@ const layout = @import("layout.zig");
 const border = @import("border.zig");
 const stack = @import("stack.zig");
 const binding = @import("binding.zig");
+const action = @import("action.zig");
 const status = @import("status.zig");
 const shake = @import("shake.zig");
 const reload = @import("reload.zig");
@@ -163,7 +164,7 @@ fn manageCycle() void {
 
     // Warp the pointer to the focused window if a focus/layout keybind asked for
     // it (dwl warpcursor). Done last, so window geometry from arrange() is final.
-    binding.applyWarp();
+    action.applyWarp();
 
     // Push the cursor theme/size (resting value at startup, or a shake step).
     shake.applyPending();

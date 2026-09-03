@@ -34,6 +34,7 @@ const Context = @import("context.zig");
 const wm = @import("wm.zig");
 const bar = @import("bar.zig");
 const binding = @import("binding.zig");
+const action = @import("action.zig");
 const status = @import("status.zig");
 const shake = @import("shake.zig");
 const outputconfig = @import("outputconfig.zig");
@@ -167,7 +168,7 @@ pub fn main() !void {
 
     // Fire the startup programs (dwl-style autostart) now that we're connected;
     // children inherit our WAYLAND_DISPLAY and so can connect to river.
-    binding.runAutostart();
+    action.runAutostart();
 
     try wm.run(display);
     log.info("clean shutdown", .{});

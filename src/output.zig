@@ -55,11 +55,6 @@ pub const Output = struct {
     mfact: f32 = 0.55,
     nmaster: i32 = 1,
 
-    // Transform applied by outputconfig. Needed so the bar and layout can place
-    // themselves at the correct physical edge: rotate_180 flips the y-axis, so
-    // "logical top" (y=0) is physically the bottom of the panel.
-    transform: config.Transform = .normal,
-
     // This output's status bar. null when the bar subsystem is disabled
     // (no wl_shm / font failed to load) or if its surfaces couldn't be created.
     bar: ?*bar.Bar = null,
@@ -222,15 +217,15 @@ fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
             if (self.name) |n| ctx.gpa.free(n);
             self.name = ctx.gpa.dupeZ(u8, std.mem.span(ev.name)) catch null;
             log.info("output connector: {s}", .{std.mem.span(ev.name)});
-            // Inherit the transform from config.monitors so bar.zig and
-            // layout.zig can account for outputs where the y-axis is flipped
-            // (rotate_180: logical top = physical bottom).
-            for (config.monitors) |m| {
-                if (std.mem.eql(u8, m.name, std.mem.span(ev.name))) {
-                    self.transform = m.transform;
-                    break;
-                }
-            }
+            // NOTE: no transform is mirrored onto the Output. outputconfig.zig
+            // hands `config.monitors`' transform to the compositor, and river
+            // then reports `position`/`dimensions` — and takes our node
+            // positions — in the LOGICAL coordinate space that transform
+            // produces. So the WM never sees physical pixels and has nothing to
+            // compensate for. A `transform` field lived here for a while, set
+            // from the config and read by nothing, above a comment claiming the
+            // bar and layout needed it; it made rotation look handled where in
+            // fact there was nothing to handle.
             reorder();
         },
         else => {}, // geometry/mode/scale/description/done — unused

@@ -7,7 +7,7 @@
 // bar on the *focused* output draws its title region in the `select` scheme
 // (mauve), every other output uses `normal` (dark). dwlb gets the "this monitor
 // is active" signal from dwl's IPC `active` event; reach is the WM, so it
-// just compares each output against the focused one (`currentOutput`).
+// just compares each output against the focused one (`query.selectedOutput`).
 //
 // Rendering is software: pixman fills the background rectangles and composites
 // fcft-rasterized glyphs into a wl_shm buffer (see render/). Each bar owns a
@@ -31,7 +31,7 @@ const config = @import("config.zig");
 const Context = @import("context.zig");
 const status = @import("status.zig");
 const Output = @import("output.zig").Output;
-const Window = @import("window.zig").Window;
+const query = @import("query.zig");
 
 const Font = @import("render/font.zig");
 const Buffer = @import("render/buffer.zig");
@@ -136,7 +136,7 @@ pub const Bar = struct {
         // instead (mirrors dwl, where the bar is hidden on a fullscreen monitor).
         // Detach the buffer once on the transition; an unmapped surface draws
         // nothing, and `hidden` is also what makes `raise` skip it.
-        if (fullscreenOn(out)) {
+        if (query.fullscreenOn(out)) {
             if (!self.hidden) {
                 self.wl_surface.attach(null, 0, 0);
                 self.shell.syncNextCommit();
@@ -168,7 +168,7 @@ pub const Bar = struct {
         const select_bg = utils.color(config.bar.select_bg);
         const status_bg = utils.color(config.bar.status_bg);
 
-        const is_current = currentOutput() == out;
+        const is_current = query.selectedOutput() == out;
         const pad: i32 = @max(2, @divFloor(h, 2));
 
         // Background.
@@ -182,7 +182,7 @@ pub const Bar = struct {
         const title_fg = if (is_current) &select_fg else &normal_fg;
         const title_bg = if (is_current) &select_bg else &normal_bg;
         fillRect(buffer, title_start, 0, w - title_start, h, title_bg);
-        if (topWindowOn(out)) |win| {
+        if (query.topVisibleOn(out)) |win| {
             if (win.title) |t| {
                 _ = font.renderStr(gpa, buffer, t, title_fg, title_start + @divFloor(pad, 2), 0);
             }
@@ -197,7 +197,7 @@ pub const Bar = struct {
         //    app_id is the rule's match key). Drawn over the already-filled title
         //    background, so it uses the title color scheme. Skipped if it would
         //    collide with the title's left edge.
-        if (topWindowOn(out)) |win| {
+        if (query.topVisibleOn(out)) |win| {
             if (win.app_id) |a| {
                 const aw = font.strWidth(gpa, a);
                 const ax = status_left - pad - aw;
@@ -384,36 +384,4 @@ fn fillRect(buffer: *Buffer, x: i32, y: i32, w: i32, h: i32, c: *const pixman.Co
         .height = @intCast(h),
     }};
     _ = pixman.Image.fillRectangles(.src, buffer.image, c, 1, &rects);
-}
-
-/// The selected output (whose bar gets the highlight). This is the same value the
-/// desktop/layout keybindings act on (see binding.focusedOutput), so the highlighted
-/// monitor is always the one the keyboard drives. Falls back to the focused
-/// window's output, then the sole output, before any selection has happened.
-fn currentOutput() ?*Output {
-    const ctx = Context.get();
-    if (ctx.current_output) |o| return o;
-    if (ctx.focused) |f| return f.output;
-    if (ctx.outputs.items.len == 1) return ctx.outputs.items[0];
-    return null;
-}
-
-/// Whether a fullscreen window is currently shown on `out`. When true the bar
-/// hides so the fullscreen window can own the whole output.
-fn fullscreenOn(out: *Output) bool {
-    const ctx = Context.get();
-    for (ctx.windows.items) |w| {
-        if (w.output == out and w.fullscreen and w.visible()) return true;
-    }
-    return false;
-}
-
-/// The window whose title the bar shows for `out`: the most-recently-focused
-/// window that's actually visible there (windows are kept in focus/stack order).
-fn topWindowOn(out: *Output) ?*Window {
-    const ctx = Context.get();
-    for (ctx.windows.items) |w| {
-        if (w.output == out and w.visible()) return w;
-    }
-    return null;
 }

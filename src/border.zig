@@ -40,6 +40,7 @@ const river = wayland.client.river;
 const config = @import("config.zig");
 const Context = @import("context.zig");
 const Output = @import("output.zig").Output;
+const query = @import("query.zig");
 const Window = @import("window.zig").Window;
 
 /// One reusable solid-color rectangle in the scene.
@@ -225,13 +226,6 @@ const Lines = struct {
     }
 };
 
-/// Does `w` take part in `out`'s tiling right now? Both passes below have to agree
-/// on this exactly — one counts the windows to find the focused one's index, the
-/// other walks the same sequence to place the dim segments — so it is written once.
-fn tiledOn(w: *Window, out: *Output) bool {
-    return w.output == out and !w.floating and w.visible();
-}
-
 /// Compute the focused window's seam lines. `cidx` (the focused window's index
 /// among the tiled windows) and `total` drive which seams exist and where the
 /// active/inactive cut falls; the two `total == 2` cases below are where dwl's
@@ -266,7 +260,7 @@ fn focusedLines() ?Lines {
     var total: i32 = 0;
     var cidx: i32 = -1;
     for (ctx.windows.items) |w| {
-        if (!tiledOn(w, out)) continue;
+        if (!query.tiledOn(w, out)) continue;
         if (w == f) cidx = total;
         total += 1;
     }
@@ -344,7 +338,7 @@ fn focusedLines() ?Lines {
             l.addActive(.{ .x = x, .y = f.y, .w = t, .h = f.height });
             var idx: i32 = 0;
             for (ctx.windows.items) |w| {
-                if (!tiledOn(w, out)) continue;
+                if (!query.tiledOn(w, out)) continue;
                 const col_master = idx < nmaster;
                 idx += 1;
                 if (w == f) continue;
