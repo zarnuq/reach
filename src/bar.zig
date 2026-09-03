@@ -168,11 +168,11 @@ pub const Bar = struct {
         // Background.
         fillRect(buffer, 0, 0, w, h, &normal_bg);
 
-        // 1. Tag area (workspaces) on the far left.
-        // 2. Title region — fills the rest, starting right after the tags; status
+        // 1. Desktop cells (workspaces) on the far left.
+        // 2. Title region — fills the rest, starting right after the desktops; status
         //    (drawn next) overwrites its right edge. The focused output gets the
         //    `select` highlight here.
-        const title_start = renderTags(buffer, out, h, pad);
+        const title_start = renderDesktops(buffer, out, h, pad);
         const title_fg = if (is_current) &select_fg else &normal_fg;
         const title_bg = if (is_current) &select_bg else &normal_bg;
         fillRect(buffer, title_start, 0, w - title_start, h, title_bg);
@@ -297,11 +297,11 @@ fn renderStatus(buffer: *Buffer, min_x: i32, w: i32, pad: i32, bg: *const pixman
         return left;
 }
 
-/// Draw the tag (workspace) cells on the left of `out`'s bar and return the x
-/// where the next region (layout symbol) should start. dwlb's `hide_vacant`
-/// behavior: a tag is shown only if it's currently viewed or has a window. The
-/// viewed tag(s) use the `select` scheme; occupied tags get a small corner box.
-fn renderTags(buffer: *Buffer, out: *Output, h: i32, pad: i32) i32 {
+/// Draw the desktop cells on the left of `out`'s bar and return the x where the
+/// next region (layout symbol) should start. dwlb's `hide_vacant` behavior: a
+/// desktop is shown only if it's the one being viewed or it holds a window. The
+/// viewed desktop uses the `select` scheme; occupied ones get a small corner box.
+fn renderDesktops(buffer: *Buffer, out: *Output, h: i32, pad: i32) i32 {
     const ctx = Context.get();
     const gpa = ctx.gpa;
 
@@ -310,25 +310,26 @@ fn renderTags(buffer: *Buffer, out: *Output, h: i32, pad: i32) i32 {
     const select_fg = utils.color(config.bar.select_fg);
     const select_bg = utils.color(config.bar.select_bg);
 
-    // Which tags hold at least one window on this output. NOTE: don't gate on
+    // Which desktops hold at least one window on this output. NOTE: don't gate on
     // `w.mapped` — that flag is only set once a window is actually laid out, which
-    // arrange() does solely for windows on a *viewed* tag (and placeFloating for
-    // floats). A window opened onto a tag you aren't viewing (e.g. a rule sending
-    // Signal to tag 4) would then never light up its tag here. Any managed window
-    // homed to this output occupies its tags, viewed or not.
-    var occupied: u32 = 0;
+    // arrange() does solely for windows on the *viewed* desktop (and placeFloating
+    // for floats). A window opened onto a desktop you aren't viewing (e.g. a rule
+    // sending Signal to desktop 4) would then never light up its cell here. Any
+    // managed window homed to this output occupies its desktop, viewed or not.
+    var occupied = [_]bool{false} ** config.desktops.count;
     for (ctx.windows.items) |w| {
-        if (w.output == out) occupied |= w.tags;
+        if (w.output == out and w.desktop >= 1 and w.desktop <= config.desktops.count) {
+            occupied[w.desktop - 1] = true;
+        }
     }
 
     var x: i32 = 0;
-    for (0..config.tags.count) |i| {
-        const bit = @as(u32, 1) << @intCast(i);
-        const active = (out.tagset & bit) != 0;
-        const occ = (occupied & bit) != 0;
-        if (!active and !occ) continue; // hide vacant tags
+    for (0..config.desktops.count) |i| {
+        const active = out.desktop == i + 1;
+        const occ = occupied[i];
+        if (!active and !occ) continue; // hide vacant desktops
 
-        const name = config.tags.names[i];
+        const name = config.desktops.names[i];
         const fg = if (active) &select_fg else &normal_fg;
         const bg = if (active) &select_bg else &normal_bg;
 
@@ -372,7 +373,7 @@ fn fillRect(buffer: *Buffer, x: i32, y: i32, w: i32, h: i32, c: *const pixman.Co
 }
 
 /// The selected output (whose bar gets the highlight). This is the same value the
-/// tag/layout keybindings act on (see binding.focusedOutput), so the highlighted
+/// desktop/layout keybindings act on (see binding.focusedOutput), so the highlighted
 /// monitor is always the one the keyboard drives. Falls back to the focused
 /// window's output, then the sole output, before any selection has happened.
 fn currentOutput() ?*Output {

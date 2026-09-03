@@ -20,16 +20,16 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
   window's own edge — flush against it, never over it, at any `inner_gap`. The line is cut
   collinearly — `border_active` alongside the focused window, `border_inactive` for
   the rest of the same line.
-- **Tags** — bitmask workspaces: view, toggle-view, move-to-tag, toggle-tag,
-  view-all.
+- **Virtual desktops** — 9 of them; each output views exactly one, each window
+  lives on exactly one. View a desktop, or send the focused window to one.
 - **Built-in status bar** — drawn on every output; status blocks run
   *in-process* (no external bar or block helper, no fifo). Per-block intervals
   and `SIGRTMIN+n` signal refresh are supported.
 - **Keybindings + multi-key chords** — arbitrary-depth chord tries built on
   river's submap primitive.
 - **Floating windows** — toggle float, fullscreen, keyboard move/resize.
-- **Window rules** — by `app_id`/`title`: force float, assign tags, switch tag,
-  send to a monitor, set floating geometry.
+- **Window rules** — by `app_id`/`title`: force float, assign a desktop, switch to
+  it, send to a monitor, set floating geometry.
 - **Monitor configuration** — modes/positions/transforms/scale applied via
   `zwlr_output_manager_v1`, with deterministic config-ordered monitor numbering.
 - **Input configuration** — keyboard repeat rate/delay via river-input-management.
@@ -41,7 +41,7 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
 
 Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
 (floating itself works via keyboard, above), a configurable cursor theme, and bar
-tag clicks.
+desktop clicks.
 
 See `CLAUDE.md` for the full architecture notes, gotchas, and the source map.
 
@@ -122,12 +122,12 @@ Two settings are startup-only, because they cannot be anything else:
 
 Deleting a field from `config.zon` reverts it to the compiled-in default, so the
 file always describes the running state rather than accumulating overrides. Window
-rules apply to windows opened from then on — reload does not retroactively re-tag
-or re-float windows that are already up. `tags.count` and the tag names are
-compile-time constants and are not part of the file.
+rules apply to windows opened from then on — reload does not retroactively move
+or re-float windows that are already up. `desktops.count` and the desktop names
+are compile-time constants and are not part of the file.
 
 > **Monitor numbering and external clients.** reach's config-ordered monitor
-> numbering (used by `focusmon`/`tagmon` and window-rule `monitor` indices) is
+> numbering (used by `focusmon`/`sendmon` and window-rule `monitor` indices) is
 > **internal to reach** — it does *not* change the order river advertises
 > `wl_output` globals to other clients. So an external bar/widget client (eww,
 > waybar, …) that targets a monitor by **index** is at the mercy of river's
@@ -140,26 +140,26 @@ compile-time constants and are not part of the file.
 
 ### Keybindings
 
-`MOD` = Super (mod4). The tag and window-management binds below are intrinsic
+`MOD` = Super (mod4). The desktop and window-management binds below are intrinsic
 defaults; the **complete keymap — including launcher/spawn binds and chords — is
 defined in `binds` in `config.zon`** and, if present, fully replaces the default
-action keymap (the tag binds are always generated). Each bind's `key` is a combo
+action keymap (the desktop binds are always generated). Each bind's `key` is a combo
 string — modifiers then the xkb keysym name, joined by `+`, e.g. `"Super+Shift+q"`,
 `"Alt+Up"`, `"XF86AudioPlay"`; a chord sub-key with no modifier is just `"d"`.
 Modifier aliases (case-insensitive): `Super`/`Mod`/`Win`, `Alt`, `Ctrl`, `Shift`,
 `Mod3`, `Mod5`. Keysyms are xkb names (`"Return"`, `"space"`, `"comma"`, `"plus"`;
 letters/digits are themselves).
 
-**Tags**
+**Desktops**
 
 | Bind | Action |
 |------|--------|
-| `MOD+1..9` | view tag *n* |
-| `MOD+Ctrl+1..9` | toggle tag *n* in the view |
-| `MOD+Shift+1..9` | move focused window to tag *n* |
-| `MOD+Ctrl+Shift+1..9` | toggle tag *n* on the focused window |
-| `MOD+0` | view all tags |
-| `MOD+Shift+0` | put focused window on all tags |
+| `MOD+1..9` | view desktop *n* |
+| `MOD+Shift+1..9` | send the focused window to desktop *n* |
+
+There is no toggle-view or "all desktops" bind: an output views exactly one
+desktop and a window lives on exactly one, so there is no such state to toggle
+into — which is also why an empty view is unreachable.
 
 **Layout / windows**
 
@@ -184,12 +184,12 @@ a submap whose sub-keys (carrying no modifier) resolve on the next press, nestin
 to arbitrary depth. The available actions are:
 
 - `spawn` — run a shell command
-- `view` / `toggleview` / `tag` / `toggletag` — tag (workspace) operations
+- `view` / `send` — desktop (workspace) operations; both take a 1-based number
 - `zoom`, `killclient`, `quit`
 - `togglefloating`, `togglefullscreen`
 - `move` / `resize` — keyboard move/resize of a floating window
 - `focusstack`, `setmfact`, `incnmaster`
-- `focusmon`, `tagmon`
+- `focusmon`, `sendmon`
 
 ## Environment
 

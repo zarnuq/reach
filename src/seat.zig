@@ -21,7 +21,7 @@ pub const Seat = struct {
         self.* = .{ .rwm = rwm };
         rwm.setListener(*Seat, listener, self);
 
-        // Hook up the keybindings (tags etc.) for this seat.
+        // Hook up the keybindings (desktops etc.) for this seat.
         binding.registerForSeat(self);
         return self;
     }
@@ -31,7 +31,7 @@ pub const Seat = struct {
         switch (event) {
             // Pointer moved onto a window. Always track its output (spawn target);
             // with sloppy focus, also focus the window and select its monitor so
-            // the bar highlight and tag keys follow the mouse.
+            // the bar highlight and desktop keys follow the mouse.
             .pointer_enter => |ev| {
                 for (ctx.windows.items) |w| {
                     if (w.rwm == ev.window) {

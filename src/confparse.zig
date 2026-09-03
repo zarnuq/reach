@@ -70,9 +70,7 @@ pub const DeltaSpec = struct { x: i32 = 0, y: i32 = 0 };
 /// maps this onto its real Action union.
 pub const ActionSpec = union(enum) {
     view: u32,
-    toggleview: u32,
-    tag: u32,
-    toggletag: u32,
+    send: u32,
     spawn: [:0]const u8,
     quit,
     killclient,
@@ -85,7 +83,7 @@ pub const ActionSpec = union(enum) {
     setmfact: f32,
     incnmaster: i32,
     focusmon: i32,
-    tagmon: i32,
+    sendmon: i32,
     reload,
 };
 
@@ -159,7 +157,7 @@ pub const FileConfig = struct {
 
 /// Binds parsed from the file, if any. binding.registerForSeat reads this: null
 /// means "no file binds, use the compiled-in default keymap"; non-null fully
-/// REPLACES the default action/spawn/chord binds (the tag binds are always
+/// REPLACES the default action/spawn/chord binds (the desktop binds are always
 /// generated). Owned by the current generation's arena (see `arena`).
 pub var binds: ?[]const KeySpec = null;
 

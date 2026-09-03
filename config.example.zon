@@ -59,7 +59,7 @@
 
     // --- monitors (dwl monrules) -------------------------------------------
     // Matched by connector name. Array ORDER defines monitor numbering for
-    // focusmon/tagmon and window-rule .monitor indices. transform is one of
+    // focusmon/sendmon and window-rule .monitor indices. transform is one of
     // .normal .rotate_90 .rotate_180 .rotate_270 .flipped .flipped_90/180/270.
     .monitors = .{
         .{ .name = "DP-3", .w = 3440, .h = 1440, .x = 0, .y = 0, .transform = .rotate_180 },
@@ -69,13 +69,14 @@
     },
 
     // --- window rules (dwl rules) ------------------------------------------
-    // Match app_id/title: "^foo" = starts-with, "foo" = contains. tags is a
-    // 1<<n bitmask. monitor is an index into .monitors above.
+    // Match app_id/title: "^foo" = starts-with, "foo" = contains. desktop is a
+    // 1-based desktop number (0/absent = leave it where it opened). monitor is an
+    // index into .monitors above.
     .rules = .{
         .{ .app_id = "rmpc", .monitor = 2 },
-        .{ .app_id = "zen", .tags = 4, .switchtotag = true },
-        .{ .app_id = "mpv", .tags = 1, .switchtotag = true },
-        .{ .app_id = "^steam", .tags = 16 },
+        .{ .app_id = "zen", .desktop = 3, .switchto = true },
+        .{ .app_id = "mpv", .desktop = 1, .switchto = true },
+        .{ .app_id = "^steam", .desktop = 5 },
         .{ .app_id = "^float", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
         .{ .app_id = "pavucontrol", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
     },
@@ -105,15 +106,15 @@
 
     // --- keybindings -------------------------------------------------------
     // Providing `binds` REPLACES the entire default action/spawn/chord keymap
-    // (dwl-style: your config is the config). The tag binds — Super+1..9 view,
-    // Super+Shift+1..9 move, Super+Ctrl+1..9 toggleview, Super+0 view-all — are
-    // always generated and are NOT listed here. A bind is either a leaf (`.action`)
-    // or a chord leader (`.chord` = list of sub-keys; sub-keys carry no modifier
-    // and nest to any depth). Actions: .view/.toggleview/.tag/.toggletag (u32
-    // mask), .{ .spawn = "cmd" }, .quit, .killclient, .zoom, .togglefloating,
+    // (dwl-style: your config is the config). The desktop binds — Super+1..9 view,
+    // Super+Shift+1..9 send the focused window — are always generated and are NOT
+    // listed here. A bind is either a leaf (`.action`) or a chord leader (`.chord`
+    // = list of sub-keys; sub-keys carry no modifier and nest to any depth).
+    // Actions: .{ .view = n } / .{ .send = n } (1-based desktop number),
+    // .{ .spawn = "cmd" }, .quit, .killclient, .zoom, .togglefloating,
     // .togglefullscreen, .{ .move = .{ .x=,.y= } }, .{ .resize = ... },
     // .{ .focusstack = n }, .{ .setmfact = f }, .{ .incnmaster = n },
-    // .{ .focusmon = n }, .{ .tagmon = n }, .reload.
+    // .{ .focusmon = n }, .{ .sendmon = n }, .reload.
     //
     // .reload re-reads THIS FILE and rebuilds everything it drives — colors, gaps,
     // layout, rules, status blocks, keybinds, bar font, monitors — without
@@ -122,7 +123,7 @@
     // so a typo costs you a log line rather than your keybindings. Two things are
     // deliberately NOT re-applied, because they cannot be: `env` (already exported
     // into a process tree that exists) and `autostart` (already run). Window rules
-    // apply to windows opened from now on; they do not retroactively re-tag or
+    // apply to windows opened from now on; they do not retroactively move or
     // re-float windows that are already up.
     .binds = .{
         // launchers
@@ -206,7 +207,7 @@
         .{ .key = "Super+n", .action = .{ .incnmaster = 1 } },
         .{ .key = "Super+comma", .action = .{ .focusmon = -1 } },
         .{ .key = "Super+period", .action = .{ .focusmon = 1 } },
-        .{ .key = "Super+Shift+comma", .action = .{ .tagmon = -1 } },
-        .{ .key = "Super+Shift+period", .action = .{ .tagmon = 1 } },
+        .{ .key = "Super+Shift+comma", .action = .{ .sendmon = -1 } },
+        .{ .key = "Super+Shift+period", .action = .{ .sendmon = 1 } },
     },
 }

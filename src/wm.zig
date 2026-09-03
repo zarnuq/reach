@@ -226,9 +226,9 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
             if (out == null and ctx.outputs.items.len > 0) out = ctx.outputs.items[0];
             w.output = out;
 
-            // New windows land on the tags the output is currently viewing
+            // New windows land on the desktop the output is currently viewing
             // (dwl behavior), so they appear on the active workspace.
-            if (out) |o| w.tags = o.tagset;
+            if (out) |o| w.desktop = o.desktop;
 
             // Insert at the head so a new window becomes master (dwm-like).
             ctx.windows.insert(ctx.gpa, 0, w) catch |err| {
@@ -240,7 +240,7 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
             };
             ctx.focused = w;
             // The new window is focused, so its monitor becomes the selected one
-            // (keeps the bar highlight and tag keys on the window you just opened).
+            // (keeps the bar highlight and desktop keys on the window you just opened).
             if (out) |o| ctx.current_output = o;
             log.info("window created (total {d})", .{ctx.windows.items.len});
         },

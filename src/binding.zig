@@ -1,4 +1,4 @@
-// binding.zig — xkb keybindings, and the tag (workspace) actions they drive.
+// binding.zig — xkb keybindings, and the desktop (workspace) actions they drive.
 //
 // river hands keybindings to the WM via river_xkb_bindings_v1: we create a
 // binding for (seat, keysym, modifiers), `enable()` it during a manage sequence,
@@ -7,15 +7,15 @@
 // enough — the layout/render re-runs automatically (no manageDirty needed).
 //
 // The full dwl keybind set is wired up in registerForSeat (mirroring the user's
-// config.h). The tag binds are:
-//   MOD+1..9            view tag n
-//   MOD+Ctrl+1..9       toggle tag n in the view
-//   MOD+Shift+sym       move focused window to tag n
-//   MOD+Ctrl+Shift+sym  toggle tag n on the focused window
-//   MOD+0               view all tags
-//   MOD+Shift+0sym      put focused window on all tags
+// config.h). The desktop binds are:
+//   MOD+1..9            view desktop n
+//   MOD+Shift+1..9      send the focused window to desktop n
 // where MOD is Super (mod4); the rest (spawn, focus, layout, chords, media, …)
 // follow in the same function.
+//
+// There is deliberately no toggle-view / toggle-desktop pair and no "all
+// desktops" bind: an output views exactly one desktop and a window lives on
+// exactly one, so those states do not exist to be toggled into.
 
 const std = @import("std");
 const log = std.log.scoped(.binding);
@@ -50,8 +50,6 @@ fn resolveKeysym(name: []const u8) ?u32 {
 const Mods = river.SeatV1.Modifiers;
 const MOD = Mods{ .mod4 = true };
 const MOD_SHIFT = Mods{ .mod4 = true, .shift = true };
-const MOD_CTRL = Mods{ .mod4 = true, .ctrl = true };
-const MOD_CTRL_SHIFT = Mods{ .mod4 = true, .ctrl = true, .shift = true };
 const MOD_ALT = Mods{ .mod1 = true };
 
 /// xkbcommon keysyms - Latin-1 chars are direct codepoints, others from xkbcommon.h
@@ -74,11 +72,9 @@ pub const Delta = struct { x: i32 = 0, y: i32 = 0 };
 
 /// What a keybinding does when pressed.
 pub const Action = union(enum) {
-    // Tag actions
+    // Desktop actions. Both carry a 1-based desktop number (see config.desktops).
     view: u32,
-    toggleview: u32,
-    tag: u32,
-    toggletag: u32,
+    send: u32,
     // Spawn - single shell command string
     spawn: [:0]const u8,
     // Enter a two-key chord submap (dwl SPAWN2): the leader arms `chord`, whose
@@ -100,7 +96,7 @@ pub const Action = union(enum) {
     setmfact: f32,
     incnmaster: i32,
     focusmon: i32,
-    tagmon: i32,
+    sendmon: i32,
     // Re-read config.zon and rebuild everything it drives (reload.zig). Deferred
     // to the next manage cycle — running it here would free this very Binding
     // while its listener is still on the stack.
@@ -184,25 +180,22 @@ pub fn registerForSeat(seat: *Seat) void {
         }
     }
 
-    // Tag management
+    // Desktop management. Desktop numbers are 1-based, so key '1' (digit_keysym[0])
+    // is desktop 1 — the index and the number differ by exactly this `+ 1`.
     var i: usize = 0;
-    while (i < config.tags.count and i < 9) : (i += 1) {
-        const bit = @as(u32, 1) << @intCast(i);
-        add(xkb, seat, digit_keysym[i], MOD, .{ .view = bit });
-        add(xkb, seat, digit_keysym[i], MOD_CTRL, .{ .toggleview = bit });
+    while (i < config.desktops.count and i < 9) : (i += 1) {
+        const d: u32 = @intCast(i + 1);
+        add(xkb, seat, digit_keysym[i], MOD, .{ .view = d });
         // NOTE: river matches Shift bindings in `no_translate` mode using the
         // BASE-level keysym (e.g. '1', not '!') while KEEPING Shift in the mod
         // mask. So Shift bindings must register the unshifted keysym + MOD_SHIFT,
         // never the shifted glyph. (See Seat.matchXkbBinding / XkbBinding.match.)
-        add(xkb, seat, digit_keysym[i], MOD_SHIFT, .{ .tag = bit });
-        add(xkb, seat, digit_keysym[i], MOD_CTRL_SHIFT, .{ .toggletag = bit });
+        add(xkb, seat, digit_keysym[i], MOD_SHIFT, .{ .send = d });
     }
-    add(xkb, seat, '0', MOD, .{ .view = ~@as(u32, 0) });
-    add(xkb, seat, '0', MOD_SHIFT, .{ .tag = ~@as(u32, 0) });
 
     // The action/spawn/chord binds: if config.zon supplied a `binds` array it FULLY
     // replaces the compiled-in keymap (dwl-style — your config is the config); the
-    // tag binds above are always generated. With no file binds, the built-in
+    // desktop binds above are always generated. With no file binds, the built-in
     // defaults below are used verbatim.
     if (confparse.binds) |specs| {
         for (specs) |spec| registerSpecBind(xkb, seat, spec);
@@ -298,9 +291,7 @@ fn applyMod(mods: *Mods, name: []const u8) bool {
 fn toAction(a: confparse.ActionSpec) Action {
     return switch (a) {
         .view => |v| .{ .view = v },
-        .toggleview => |v| .{ .toggleview = v },
-        .tag => |v| .{ .tag = v },
-        .toggletag => |v| .{ .toggletag = v },
+        .send => |v| .{ .send = v },
         .spawn => |v| .{ .spawn = v },
         .quit => .quit,
         .killclient => .killclient,
@@ -313,7 +304,7 @@ fn toAction(a: confparse.ActionSpec) Action {
         .setmfact => |v| .{ .setmfact = v },
         .incnmaster => |v| .{ .incnmaster = v },
         .focusmon => |v| .{ .focusmon = v },
-        .tagmon => |v| .{ .tagmon = v },
+        .sendmon => |v| .{ .sendmon = v },
         .reload => .reload,
     };
 }
@@ -322,7 +313,7 @@ fn toAction(a: confparse.ActionSpec) Action {
 /// Deliberately MINIMAL and generic — a terminal plus core window management, with
 /// no references to specific apps — so a bare install (or zero-config run from the
 /// repo) is usable out of the box. The full personal keymap lives in
-/// `config.example.zon`, not here. Tag binds are generated separately in
+/// `config.example.zon`, not here. Desktop binds are generated separately in
 /// registerForSeat and are always present.
 fn registerDefaultBinds(xkb: *river.XkbBindingsV1, seat: *Seat) void {
     // Terminal: dwl's Super+Shift+Return. Respect $TERMINAL, fall back to foot (a
@@ -346,8 +337,8 @@ fn registerDefaultBinds(xkb: *river.XkbBindingsV1, seat: *Seat) void {
     add(xkb, seat, 'n', MOD, .{ .incnmaster = 1 });
     add(xkb, seat, ',', MOD, .{ .focusmon = -1 });
     add(xkb, seat, '.', MOD, .{ .focusmon = 1 });
-    add(xkb, seat, ',', MOD_SHIFT, .{ .tagmon = -1 });
-    add(xkb, seat, '.', MOD_SHIFT, .{ .tagmon = 1 });
+    add(xkb, seat, ',', MOD_SHIFT, .{ .sendmon = -1 });
+    add(xkb, seat, '.', MOD_SHIFT, .{ .sendmon = 1 });
 }
 
 /// Destroy every binding and chord, returning the module to its pre-registration
@@ -583,36 +574,26 @@ pub fn spawn(cmd: [:0]const u8) void {
 fn execute(action: Action) void {
     const ctx = Context.get();
     switch (action) {
-        // Tag actions. No warp here: switching/ moving tags on the same monitor
-        // shouldn't yank the pointer (user preference). focusmon still warps
-        // because it moves the keyboard selection across monitors; tagmon does
-        // not (it moves a window, not the selection — see its case below).
-        .view => |t| {
-            if (t == 0) return;
+        // Desktop actions. No warp here: switching desktops or moving a window
+        // between them on the same monitor shouldn't yank the pointer (user
+        // preference). focusmon still warps because it moves the keyboard
+        // selection across monitors; sendmon does not (it moves a window, not the
+        // selection — see its case below).
+        //
+        // Out-of-range numbers are dropped rather than clamped: a bind or IPC
+        // message naming desktop 12 is a mistake, and silently landing on 9 hides
+        // it. 0 is never a valid desktop (see config.desktops).
+        .view => |d| {
+            if (!validDesktop(d)) return;
             const out = focusedOutput() orelse return;
-            out.tagset = t;
+            out.desktop = d;
             refocus(out);
         },
-        .toggleview => |t| {
-            const out = focusedOutput() orelse return;
-            const next = out.tagset ^ t;
-            if (next == 0) return;
-            out.tagset = next;
-            refocus(out);
-        },
-        .tag => |t| {
-            if (t == 0) return;
+        .send => |d| {
+            if (!validDesktop(d)) return;
             const out = focusedOutput() orelse return;
             if (ctx.focused) |f| {
-                f.tags = t;
-                refocus(out);
-            }
-        },
-        .toggletag => |t| {
-            const out = focusedOutput() orelse return;
-            if (ctx.focused) |f| {
-                const next = f.tags ^ t;
-                if (next != 0) f.tags = next;
+                f.desktop = d;
                 refocus(out);
             }
         },
@@ -676,12 +657,18 @@ fn execute(action: Action) void {
         // Moves the focused WINDOW to the adjacent monitor. Unlike focusmon, the
         // selection (and pointer) stay put — moving a window shouldn't yank the
         // cursor — so no warp here.
-        .tagmon => |dir| tagMonitor(dir),
+        .sendmon => |dir| sendToMonitor(dir),
     }
 }
 
-/// The output the tag/layout actions affect: the selected output (`selmon`). This
-/// is the same value the bar highlights, so a keybinding always acts on the
+/// Whether `d` names a real desktop. Desktops are 1-based, so 0 is always
+/// invalid; the upper bound is `config.desktops.count`.
+fn validDesktop(d: u32) bool {
+    return d >= 1 and d <= config.desktops.count;
+}
+
+/// The output the desktop/layout actions affect: the selected output (`selmon`).
+/// This is the same value the bar highlights, so a keybinding always acts on the
 /// monitor that visibly has focus. Falls back to the first output before any
 /// selection has been made.
 fn focusedOutput() ?*Output {
@@ -691,7 +678,7 @@ fn focusedOutput() ?*Output {
 }
 
 /// Ensure focus lands on a window that's actually visible on `out` after a view
-/// or tag change; clears focus if the output is now empty.
+/// or desktop change; clears focus if the output is now empty.
 fn refocus(out: *Output) void {
     const ctx = Context.get();
     if (ctx.focused) |f| {
@@ -815,13 +802,13 @@ fn focusMonitor(dir: i32) void {
     ctx.focused = topVisibleOn(next_out);
 }
 
-/// Send the focused window to the adjacent monitor, keeping it on the SAME tag
-/// (desktop) number it was already on rather than retagging it to the
-/// destination's viewed tags. So a window on tag 3 stays on tag 3 over there —
-/// it only shows immediately if that monitor is already viewing tag 3, otherwise
-/// it waits on that desktop. The selection stays put; focus falls to whatever's
-/// left on the current monitor.
-fn tagMonitor(dir: i32) void {
+/// Send the focused window to the adjacent monitor, keeping it on the SAME
+/// desktop number it was already on rather than moving it to the destination's
+/// viewed desktop. So a window on desktop 3 stays on desktop 3 over there — it
+/// only shows immediately if that monitor is already viewing desktop 3, otherwise
+/// it waits there. The selection stays put; focus falls to whatever's left on the
+/// current monitor.
+fn sendToMonitor(dir: i32) void {
     const ctx = Context.get();
     const cur = focusedOutput() orelse return;
     const next_out = adjacentOutput(cur, dir) orelse return;

@@ -44,10 +44,10 @@ pub const Window = struct {
     float_frac_w: f32 = 0,
     float_frac_h: f32 = 0,
 
-    // Tags (workspace bitmask) this window belongs to. Set from the output's
-    // current tagset when the window appears. Visible when it intersects the
-    // output's tagset.
-    tags: u32 = 1,
+    // The virtual desktop this window lives on (1-based; see config.desktops).
+    // Set from the output's current desktop when the window appears. Visible
+    // when it equals the output's desktop.
+    desktop: u32 = 1,
 
     // Output-relative content geometry, assigned by the layout (tiled) or the
     // float placement. Meaningful once `mapped` is true.
@@ -103,10 +103,10 @@ pub const Window = struct {
     }
 
     /// Whether this window should be shown right now: mapped, homed to an output,
-    /// and on one of that output's currently-viewed tags.
+    /// and on that output's currently-viewed desktop.
     pub fn visible(self: *Window) bool {
         const o = self.output orelse return false;
-        return self.mapped and (self.tags & o.tagset) != 0;
+        return self.mapped and self.desktop == o.desktop;
     }
 
     /// Recompute float state from the current hints. A window floats if it is a
@@ -212,7 +212,7 @@ pub const Window = struct {
 
     /// Apply window rules (config.rules) once, after identity (app_id/title) is
     /// known. ALL matching rules are applied in order (dwl accumulates): force
-    /// floating, set tags, switch the output's view, reassign monitor, and stash
+    /// floating, set the desktop, switch the output's view, reassign monitor, stash
     /// a floating geometry. No-op until at least app_id or title exists.
     pub fn applyRules(self: *Window) void {
         if (self.rules_done) return;
@@ -234,10 +234,12 @@ pub const Window = struct {
             if (r.monitor >= 0 and r.monitor < ctx.outputs.items.len) {
                 self.output = ctx.outputs.items[@intCast(r.monitor)];
             }
-            if (r.tags != 0) {
-                self.tags = r.tags;
-                if (r.switchtotag) {
-                    if (self.output) |o| o.tagset = r.tags;
+            // 0 = "no desktop in this rule"; anything past the configured count
+            // is ignored rather than sending the window somewhere unreachable.
+            if (r.desktop != 0 and r.desktop <= config.desktops.count) {
+                self.desktop = r.desktop;
+                if (r.switchto) {
+                    if (self.output) |o| o.desktop = r.desktop;
                 }
             }
             if (r.floating) {
@@ -265,7 +267,7 @@ pub const Window = struct {
 
     /// RENDER phase: place the node in global coordinates and show it.
     pub fn render(self: *Window) void {
-        // Hidden when unmapped, orphaned, or on a tag the output isn't viewing.
+        // Hidden when unmapped, orphaned, or on a desktop the output isn't viewing.
         if (!self.visible()) {
             self.rwm.hide();
             return;
@@ -304,7 +306,7 @@ pub const Window = struct {
 
             // The app_id is the primary key for window rules. Dup it, then apply
             // rules (once) now that identity is known, and ask for a fresh cycle
-            // so any float/tag/monitor change takes effect.
+            // so any float/desktop/monitor change takes effect.
             .app_id => |ev| {
                 if (self.app_id) |a| ctx.gpa.free(a);
                 self.app_id = if (ev.app_id) |s|

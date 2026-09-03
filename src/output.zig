@@ -32,8 +32,9 @@ pub const Output = struct {
     width: i32 = 0,
     height: i32 = 0,
 
-    // Currently-viewed tags (workspace bitmask). Default: tag 1 (bit 0).
-    tagset: u32 = 1,
+    // The virtual desktop this output is currently showing (1-based; see
+    // config.desktops). Exactly one, always — there is no empty view.
+    desktop: u32 = 1,
 
     // Per-output layout state
     mfact: f32 = 0.55,
@@ -182,7 +183,7 @@ fn rankLessThan(_: void, a: *Output, b: *Output) bool {
 }
 
 /// Order `ctx.outputs` by `config.monitors` so that monitor numbering — which
-/// drives focusmon/tagmon navigation (MOD+,/.) and the window-rule `monitor`
+/// drives focusmon/sendmon navigation (MOD+,/.) and the window-rule `monitor`
 /// index — is deterministic and user-controlled, instead of following river's
 /// arbitrary output-event order. Stable, so unconfigured outputs keep their
 /// relative arrival order. Pointers into the list (current_output, …) are

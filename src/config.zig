@@ -5,8 +5,8 @@
 // user set in `config.zon` (see confparse.load, called once at startup before the
 // seat/bar/outputs are configured). With no config file, these defaults are used
 // verbatim — so the binary works out of the box and nothing user-specific is baked
-// into the ELF (important for packaging). Tags and the type definitions below stay
-// `const`: tag count feeds comptime sizing and the types are, well, types.
+// into the ELF (important for packaging). Desktops and the type definitions below stay
+// `const`: the desktop count feeds comptime sizing and the types are, well, types.
 // Keybindings live in binding.zig; their defaults are likewise overridable via the
 // `binds` array in config.zon.
 
@@ -21,7 +21,7 @@ pub var outer_gap: i32 = 0;
 pub var inner_gap: i32 = 2;
 
 /// Focus follows the mouse (dwl's `sloppyfocus`): moving the pointer onto a
-/// window focuses it and selects its monitor — so the bar highlight and tag keys
+/// window focuses it and selects its monitor — so the bar highlight and desktop keys
 /// track the monitor the mouse is over. false = focus changes only on click.
 pub var sloppy_focus: bool = true;
 
@@ -171,7 +171,7 @@ pub var float_step: i32 = 40;
 //
 // When a window's app_id (or title) becomes known, the first... actually ALL
 // matching rules are applied (dwl accumulates). A rule can force the window
-// floating, move it to a tag set, switch the output to view that tag, send it to
+// floating, move it to a desktop, switch the output to view that desktop, send it to
 // a specific monitor, and give a floating geometry as fractions of the output.
 //
 // Matching mirrors dwl's POSIX-regex feel without a regex dep:
@@ -182,10 +182,10 @@ pub var float_step: i32 = 40;
 pub const Rule = struct {
     app_id: ?[]const u8 = null,
     title: ?[]const u8 = null,
-    /// Tag bitmask to put the window on (0 = leave on the default/current tags).
-    tags: u32 = 0,
-    /// Also switch the target output to view `tags` (dwl switchtotag).
-    switchtotag: bool = false,
+    /// Desktop to put the window on, 1-based (0 = leave it on the current one).
+    desktop: u32 = 0,
+    /// Also switch the target output to view `desktop` (dwl switchtotag).
+    switchto: bool = false,
     /// Force the window floating (never forces *non*-floating).
     floating: bool = false,
     /// Send the window to this output index (−1 = leave where it spawned).
@@ -199,7 +199,7 @@ pub const Rule = struct {
 };
 
 /// Empty by default. Define your own in config.zon's `rules` (app_id/title based;
-/// tags use `1 << n` indices).
+/// `desktop` is a 1-based desktop number).
 pub var rules: []const Rule = &[_]Rule{};
 
 /// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Each face the
@@ -222,20 +222,29 @@ pub var border_inactive: u32 = 0x45475a;
 pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------
-// Tags (dwl-style workspaces)
+// Virtual desktops
 // ---------------------------------------------------------------------------
 //
-// Tags are a bitmask workspace model (like dwl/dwm). Each output views a set of
-// tags (`tagset`); each window belongs to a set of tags. A window is visible on
-// its output when `window.tags & output.tagset != 0`. The keybinds that drive
-// them (MOD+1..9 view, MOD+Shift+1..9 move, MOD+Ctrl+1..9 toggleview, MOD+0 view
-// all) are defined in binding.zig, mirroring the user's dwl config.h.
+// Each output views exactly ONE desktop (`output.desktop`); each window lives on
+// exactly ONE desktop (`window.desktop`). A window is visible on its output when
+// `window.desktop == output.desktop`.
+//
+// Desktop numbers are 1-BASED throughout — in the config, in the keybinds, and
+// internally — so `.desktop = 3` is the desktop you reach with MOD+3 and the one
+// the bar labels "3". 0 is never a valid desktop; it is the "unset" sentinel for
+// `Rule.desktop`. The only place the offset shows up is indexing `names`, which
+// is `names[desktop - 1]`.
+//
+// This replaces the dwm/dwl bitmask tag model. A window can no longer be in two
+// places at once, and an output can no longer view two desktops at once — which
+// is what makes an empty view unrepresentable rather than something the toggle
+// actions had to guard against.
 
-pub const tags = struct {
-    /// Number of tags (dwl uses 9).
+pub const desktops = struct {
+    /// Number of desktops. Bound above by 9, since the binds are MOD+1..9.
     pub const count = 9;
 
-    /// Labels shown in the bar's tag area.
+    /// Labels shown in the bar. `names[d - 1]` is the label for desktop `d`.
     pub const names = [_][]const u8{ "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 };
 
