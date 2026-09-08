@@ -261,6 +261,11 @@ pub const desktops = struct {
 // the WM and knows the focused output directly (no IPC needed).
 
 pub const bar = struct {
+    /// Draw the bar at all. False leaves the strip to the windows (height() is 0,
+    /// so usableArea() reclaims it) and keeps the status blocks from running —
+    /// for a session whose panel is an external layer-shell client instead.
+    pub var enabled: bool = true;
+
     /// fontconfig name. fcft resolves this; a generic monospace is the default so
     /// the bar renders without assuming a specific (e.g. Nerd) font is installed.
     pub var font: [:0]const u8 = "monospace:size=12";

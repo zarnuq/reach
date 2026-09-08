@@ -118,6 +118,7 @@ pub const CursorSpec = struct {
 
 /// nested `bar` table.
 pub const BarSpec = struct {
+    enabled: ?bool = null,
     font: ?[:0]const u8 = null,
     top: ?bool = null,
     normal_fg: ?u32 = null,
@@ -372,6 +373,7 @@ fn overlay(fc: FileConfig) void {
         }
     }
     if (fc.bar) |b| {
+        if (b.enabled) |v| config.bar.enabled = v;
         if (b.font) |v| config.bar.font = v;
         if (b.top) |v| config.bar.top = v;
         if (b.normal_fg) |v| config.bar.normal_fg = v;

@@ -44,6 +44,7 @@ pub var enabled: bool = false;
 
 /// Load the font and enable the bar. Call once at startup, after `Font.initLibrary`.
 pub fn initFont(gpa: std.mem.Allocator) void {
+    if (!config.bar.enabled) return;
     if (Context.get().wl_shm == null) {
         log.warn("no wl_shm — bar disabled", .{});
         return;
@@ -67,6 +68,7 @@ pub fn reloadFont(gpa: std.mem.Allocator) bool {
         font.deinit();
         enabled = false;
     }
+    if (!config.bar.enabled) return old_height != 0;
     font.init(gpa, config.bar.font) catch |err| {
         log.err("reload bar font failed: {} — bar disabled", .{err});
         return old_height != 0;

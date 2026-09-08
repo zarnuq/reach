@@ -66,6 +66,7 @@ pub fn apply() void {
     // which subsystems actually need rebuilding below. They BORROW the outgoing
     // arena, so every comparison against them has to happen before `release`.
     const old_font = config.bar.font;
+    const old_bar_enabled = config.bar.enabled;
     const old_cursor = cursorSettings();
     const old_monitors = config.monitors;
 
@@ -78,18 +79,21 @@ pub fn apply() void {
     // Diff the two generations while BOTH are still alive. Doing this after the
     // release below would be reading freed memory.
     const font_changed = !std.mem.eql(u8, old_font, config.bar.font);
+    const bar_toggled = old_bar_enabled != config.bar.enabled;
     const cursor_changed = !cursorEql(old_cursor, cursorSettings());
     const monitors_changed = !monitorsEql(old_monitors, config.monitors);
 
     // Nothing points into the outgoing generation any more.
     confparse.release(gpa, previous);
 
-    // Status blocks: the slice was just replaced, so re-run them all.
-    status.restart();
+    // Status blocks: the slice was just replaced, so re-run them all. Skipped
+    // with the bar off — nothing reads the text, so running the commands is pure
+    // subprocess churn (startup gates status.start() the same way).
+    if (bar.enabled) status.restart();
 
     // Font: reloading is not free (fcft re-shapes every glyph) and a height change
     // forces every bar surface to be rebuilt, so only touch it if the name moved.
-    if (font_changed) {
+    if (font_changed or bar_toggled) {
         if (bar.reloadFont(gpa)) recreateBars();
     }
 

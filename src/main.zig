@@ -36,6 +36,7 @@ const bar = @import("bar.zig");
 const binding = @import("binding.zig");
 const action = @import("action.zig");
 const status = @import("status.zig");
+const ipc = @import("ipc.zig");
 const shake = @import("shake.zig");
 const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
@@ -152,6 +153,11 @@ pub fn main() !void {
     Font.initLibrary() catch |err| log.err("fcft init failed: {} — bar disabled", .{err});
     bar.initFont(gpa);
     if (bar.enabled) status.start();
+
+    // The state socket an external bar reads. Independent of bar.enabled: the two
+    // bars can coexist, and the socket is what makes turning ours off survivable.
+    ipc.start();
+    defer ipc.stop();
 
     // Cursor theme/size, and shake-to-find's pointer devices if enabled.
     shake.start();

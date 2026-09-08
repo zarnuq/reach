@@ -37,9 +37,16 @@ const C = struct {
 };
 
 const EV_SYN: u16 = 0x00;
+const EV_KEY: u16 = 0x01;
 const EV_REL: u16 = 0x02;
+const EV_ABS: u16 = 0x03;
 const REL_X: u16 = 0x00;
 const REL_Y: u16 = 0x01;
+const ABS_X: u16 = 0x00;
+const ABS_Y: u16 = 0x01;
+/// Finger down/up on a touch device. Releasing invalidates the last position, so
+/// lifting and re-placing doesn't read as one enormous jump across the pad.
+const BTN_TOUCH: u16 = 0x14a;
 
 const InputEvent = extern struct {
     sec: i64,
@@ -112,6 +119,21 @@ const Sample = struct {
 pub var device_fds: [MAX_DEVICES]i32 = [_]i32{-1} ** MAX_DEVICES;
 pub var device_count: usize = 0;
 
+// Absolute devices report a POSITION, not a delta, so each one needs its own
+// previous position to subtract — unlike the relative path, where every device
+// can pour straight into the shared accumulator.
+//
+// `have` is per AXIS, and is set by the sample that stores the coordinate rather
+// than by the finger-down event: a touchpad sends BTN_TOUCH before the position,
+// so trusting the press would difference the first sample of a touch against
+// wherever the LAST touch ended — one jump the width of the pad, every time a
+// finger lands.
+var device_abs: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
+var abs_x: [MAX_DEVICES]i32 = undefined;
+var abs_y: [MAX_DEVICES]i32 = undefined;
+var abs_have_x: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
+var abs_have_y: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
+
 /// Animation tick; armed only while the size is moving.
 pub var timer_fd: ?i32 = null;
 
@@ -140,17 +162,37 @@ fn nowUs() u64 {
     return @as(u64, @intCast(ts.sec)) * 1_000_000 + @as(u64, @intCast(ts.nsec)) / 1000;
 }
 
-/// Relative pointing devices only — absolute ones (touchscreens, tablets) don't
-/// shake meaningfully.
-fn isPointer(fd: c_int) bool {
-    var evbits = [_]u8{0} ** 4;
-    if (C.ioctl(fd, EVIOCGBIT(0, evbits.len), &evbits) < 0) return false;
-    if (evbits[EV_REL >> 3] & (@as(u8, 1) << @intCast(EV_REL & 7)) == 0) return false;
+/// How a pointing device reports motion, or null if it doesn't point.
+///
+/// Both kinds are taken. A mouse or TrackPoint is relative; a TOUCHPAD is
+/// absolute, and taking only the relative kind is what made shake-to-find work
+/// on the TrackPoint but not the trackpad of the same laptop. An I2C touchpad
+/// does also expose a REL mouse-emulation node that passes the relative test —
+/// but it stays silent while hid-multitouch drives the real ABS node, so it is
+/// opened and never heard from.
+const Kind = enum { relative, absolute };
 
-    var relbits = [_]u8{0} ** 2;
-    if (C.ioctl(fd, EVIOCGBIT(EV_REL, relbits.len), &relbits) < 0) return false;
-    const need: u8 = (1 << REL_X) | (1 << REL_Y);
-    return relbits[0] & need == need;
+fn pointerKind(fd: c_int) ?Kind {
+    var evbits = [_]u8{0} ** 4;
+    if (C.ioctl(fd, EVIOCGBIT(0, evbits.len), &evbits) < 0) return null;
+
+    if (evbits[EV_REL >> 3] & (@as(u8, 1) << @intCast(EV_REL & 7)) != 0) {
+        var relbits = [_]u8{0} ** 2;
+        if (C.ioctl(fd, EVIOCGBIT(EV_REL, relbits.len), &relbits) >= 0) {
+            const need: u8 = (1 << REL_X) | (1 << REL_Y);
+            if (relbits[0] & need == need) return .relative;
+        }
+    }
+
+    if (evbits[EV_ABS >> 3] & (@as(u8, 1) << @intCast(EV_ABS & 7)) != 0) {
+        var absbits = [_]u8{0} ** 8;
+        if (C.ioctl(fd, EVIOCGBIT(EV_ABS, absbits.len), &absbits) >= 0) {
+            const need: u8 = (1 << ABS_X) | (1 << ABS_Y);
+            if (absbits[0] & need == need) return .absolute;
+        }
+    }
+
+    return null;
 }
 
 pub fn start() void {
@@ -167,11 +209,12 @@ pub fn start() void {
         const path = std.fmt.bufPrintZ(&name_buf, "/dev/input/event{d}", .{i}) catch continue;
         const fd = C.open(path.ptr, C.O_RDONLY | C.O_NONBLOCK | C.O_CLOEXEC);
         if (fd < 0) continue;
-        if (!isPointer(fd)) {
+        const kind = pointerKind(fd) orelse {
             _ = C.close(fd);
             continue;
-        }
+        };
         device_fds[device_count] = fd;
+        device_abs[device_count] = kind == .absolute;
         device_count += 1;
     }
 
@@ -243,6 +286,30 @@ pub fn onMotion(index: usize) bool {
                     REL_X => acc_x += @floatFromInt(ev.value),
                     REL_Y => acc_y += @floatFromInt(ev.value),
                     else => {},
+                },
+                // A position, differenced against this device's last one to give
+                // the accumulator the same kind of delta the relative branch
+                // hands it. The first sample of a touch only sets the origin.
+                // Guarded on `device_abs` so a hybrid device classified relative
+                // can't feed the same motion in twice.
+                EV_ABS => if (device_abs[index]) switch (ev.code) {
+                    ABS_X => {
+                        if (abs_have_x[index]) acc_x += @floatFromInt(ev.value - abs_x[index]);
+                        abs_x[index] = ev.value;
+                        abs_have_x[index] = true;
+                    },
+                    ABS_Y => {
+                        if (abs_have_y[index]) acc_y += @floatFromInt(ev.value - abs_y[index]);
+                        abs_y[index] = ev.value;
+                        abs_have_y[index] = true;
+                    },
+                    else => {},
+                },
+                // Finger up: forget the origin, so the next touch landing
+                // elsewhere on the pad isn't counted as travel between the two.
+                EV_KEY => if (ev.code == BTN_TOUCH and ev.value == 0) {
+                    abs_have_x[index] = false;
+                    abs_have_y[index] = false;
                 },
                 EV_SYN => moved = true,
                 else => {},

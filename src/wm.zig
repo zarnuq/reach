@@ -25,6 +25,7 @@ const action = @import("action.zig");
 const status = @import("status.zig");
 const shake = @import("shake.zig");
 const reload = @import("reload.zig");
+const ipc = @import("ipc.zig");
 const Window = @import("window.zig").Window;
 const Output = @import("output.zig").Output;
 const Seat = @import("seat.zig").Seat;
@@ -42,8 +43,9 @@ pub fn deinit() void {
 }
 
 /// The event loop: poll() over the Wayland fd plus the status engine's 1s timerfd
-/// and real-time-signal fd, and shake-to-find's pointer devices and animation
-/// tick (all optional; added to the set only when present).
+/// and real-time-signal fd, shake-to-find's pointer devices and animation tick,
+/// and the state socket's listener plus its connected clients (all optional;
+/// added to the set only when present).
 pub fn run(display: *wl.Display) !void {
     const ctx = Context.get();
     const wl_fd = display.getFd();
@@ -52,8 +54,9 @@ pub fn run(display: *wl.Display) !void {
         _ = display.flush();
 
         // Slot 0 is always Wayland; the rest are added when their subsystem is
-        // live. Sized for wayland + status timer/signal + shake timer + devices.
-        var fds: [4 + shake.device_fds.len]std.posix.pollfd = undefined;
+        // live. Sized for wayland + status timer/signal + shake timer + devices
+        // + the ipc listener and its clients.
+        var fds: [5 + shake.device_fds.len + ipc.max_clients]std.posix.pollfd = undefined;
         var n: usize = 1;
         fds[0] = .{ .fd = wl_fd, .events = std.posix.POLL.IN, .revents = 0 };
         const timer_slot = addFd(&fds, &n, status.timer_fd);
@@ -61,6 +64,10 @@ pub fn run(display: *wl.Display) !void {
         const shake_timer_slot = addFd(&fds, &n, shake.timer_fd);
         const shake_first = n;
         for (shake.device_fds[0..shake.device_count]) |fd| _ = addFd(&fds, &n, fd);
+        const ipc_slot = addFd(&fds, &n, ipc.listen_fd);
+        const ipc_first = n;
+        const ipc_polled = ipc.client_count;
+        for (ipc.client_fds[0..ipc_polled]) |fd| _ = addFd(&fds, &n, fd);
 
         _ = std.posix.poll(fds[0..n], -1) catch |err| {
             log.err("poll failed: {}", .{err});
@@ -98,6 +105,20 @@ pub fn run(display: *wl.Display) !void {
         if (shake_timer_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
             if (shake.onTimer()) dirty = true;
         };
+
+        // State socket. Clients BEFORE the listener, and descending: onClient may
+        // drop a client (compacting the array), and accepting one appends to it —
+        // either would invalidate the slot indices this loop reads. Neither can
+        // make the window manager dirty; the socket is write-only (see ipc.zig).
+        var client = ipc_polled;
+        while (client > 0) {
+            client -= 1;
+            const revents = fds[ipc_first + client].revents;
+            if (revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
+                ipc.onClient(client);
+            }
+        }
+        if (ipc_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) ipc.onAccept();
 
         if (dirty) ctx.rwm.manageDirty();
     }
@@ -185,6 +206,11 @@ fn renderCycle() void {
         if (o.bar) |b| b.render();
     }
     stack.apply();
+
+    // Publish the same state the bar just drew, for an external one. Here rather
+    // than anywhere else so both bars update on the same beat; a no-op when the
+    // state is unchanged or nothing is listening.
+    ipc.publish();
 }
 
 // ---------------------------------------------------------------------------
