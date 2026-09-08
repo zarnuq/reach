@@ -1,4 +1,4 @@
-// shake.zig — shake the mouse, the cursor grows, then settles back.
+// shake.zig — shake the mouse, and `cursor.shake.command` runs.
 //
 // Detection reads raw deltas from /dev/input/event* rather than the protocol:
 // river_seat_v1.pointer_position only arrives inside a manage sequence, and
@@ -13,8 +13,15 @@
 // That test only answers "is this shaking right now". What makes it feel right
 // is requiring it to stay true for `shake.delay` — an overshoot-and-correct
 // looks like a shake for a moment, a real shake keeps looking like one. So the
-// ratio tuning below stays fixed and permissive, and `delay` (plus `speed`) is
-// the whole user-facing surface.
+// ratio tuning below stays fixed and permissive, and `delay` is the whole
+// user-facing surface.
+//
+// A shake used to grow the cursor from here. It no longer does anything itself:
+// it spawns `cursor.shake.command`. Growing was possible because a cursor size
+// is just a number handed to set_xcursor_theme — but the deltas above are the
+// ONLY pointer information reach has, and you cannot draw at a cursor whose
+// position you don't know. The base cursor theme/size is still applied from
+// this file (applyPending), which is why the pending_size plumbing stays.
 
 const std = @import("std");
 const linux = std.os.linux;
@@ -22,6 +29,7 @@ const log = std.log.scoped(.shake);
 
 const config = @import("config.zig");
 const Context = @import("context.zig");
+const action = @import("action.zig");
 
 // This Zig's std.posix has no open/ioctl; the codebase already calls libc
 // directly elsewhere (popen, fopen, setenv).
@@ -95,18 +103,10 @@ const WINDOW_US: u64 = 500_000;
 /// so the ratio dipping between reversals doesn't reset progress.
 const GAP_US: u64 = 100_000;
 
-/// Stay grown this long after the shake stops, so it's actually spottable.
-const HOLD_US: u64 = 500_000;
-
-/// Shrink at this fraction of `speed` — falling slower than it rises.
-const SHRINK_FACTOR: f32 = 0.35;
-
-const MAX_SIZE: u32 = 96;
-
-/// Quantise the animated size: themes only hold a few real sizes (Bibata:
-/// 16/20/22/24/28/32/40/48/56/64/72/80/88/96) and each distinct one costs the
-/// compositor an xcursor load plus a texture upload.
-const SIZE_STEP: f32 = 8;
+/// Headroom the sustained-shake accumulator may bank past `delay`: enough that
+/// a momentary dip doesn't drop back under the threshold, not so much that a
+/// long shake banks seconds it would then take just as long to bleed off.
+const OVERSHOOT_US: u64 = 500_000;
 
 const Sample = struct {
     t_us: u64,
@@ -148,12 +148,11 @@ var acc_x: f64 = 0;
 var acc_y: f64 = 0;
 var last_sample_us: u64 = 0;
 
-var cur_size: f32 = 0;
 var sent_size: u32 = 0;
 var pending_size: ?u32 = null;
 var last_shake_us: u64 = 0; // last time the ratio test passed
-var last_grow_us: u64 = 0; // last time growth was armed
 var shake_us: u64 = 0; // how long the shake has been sustained
+var fired: bool = false; // command already run for this shake
 var last_tick_us: u64 = 0;
 
 fn nowUs() u64 {
@@ -196,7 +195,6 @@ fn pointerKind(fd: c_int) ?Kind {
 }
 
 pub fn start() void {
-    cur_size = @floatFromInt(config.cursor.size);
     sent_size = config.cursor.size;
     pending_size = config.cursor.size;
 
@@ -256,6 +254,7 @@ pub fn stop() void {
     acc_x = 0;
     acc_y = 0;
     shake_us = 0;
+    fired = false;
 }
 
 fn armTimer(on: bool) void {
@@ -394,7 +393,8 @@ fn isShaking(now: u64) bool {
     return path_sum / diag >= THRESHOLD;
 }
 
-/// Returns true if the quantised size changed.
+/// Drives the sustained-shake accumulator. Returns true if river needs a manage
+/// cycle — nothing here changes the cursor any more, so always false.
 pub fn onTimer() bool {
     var buf: [8]u8 = undefined;
     _ = C.read(timer_fd.?, &buf, buf.len);
@@ -402,11 +402,8 @@ pub fn onTimer() bool {
     const sh = config.cursor.shake;
     const now = nowUs();
     const dt_us = now - last_tick_us;
-    const dt = @as(f32, @floatFromInt(dt_us)) / 1_000_000.0;
     last_tick_us = now;
 
-    const base: f32 = @floatFromInt(config.cursor.size);
-    const max: f32 = @floatFromInt(MAX_SIZE);
     const delay_us = @as(u64, sh.delay) * 1000;
 
     // Is the motion still qualifying? sampleMotion stamps last_shake_us on every
@@ -416,7 +413,7 @@ pub fn onTimer() bool {
     // Sustained-shake accumulator. Builds while shaking, and bleeds off at twice
     // the rate when not, so a stray flick never banks progress toward `delay`.
     if (qualifying) {
-        shake_us = @min(shake_us + dt_us, delay_us + HOLD_US);
+        shake_us = @min(shake_us + dt_us, delay_us + OVERSHOOT_US);
     } else {
         shake_us -= @min(shake_us, dt_us * 2);
     }
@@ -425,19 +422,18 @@ pub fn onTimer() bool {
     // is what keeps delay = 0 from meaning "always armed".
     const armed = qualifying and shake_us >= delay_us;
 
-    if (armed) {
-        cur_size = @min(max, cur_size + sh.speed * dt);
-        last_grow_us = now;
-    } else if (now - last_grow_us < HOLD_US) {
-        // hold, so it stays big enough to actually spot
-    } else {
-        cur_size = @max(base, cur_size - sh.speed * SHRINK_FACTOR * dt);
+    // Once per shake. `fired` clears only when the accumulator has bled all the
+    // way off, so keeping the shake going doesn't re-run the command every tick
+    // and a dip mid-shake doesn't count as a second gesture.
+    if (armed and !fired) {
+        fired = true;
+        if (sh.command.len != 0) action.spawn(sh.command);
     }
 
     // Fully settled: stop ticking and forget the history so the next shake
     // starts from a clean window.
-    if (cur_size <= base and !qualifying and shake_us == 0) {
-        cur_size = base;
+    if (!qualifying and shake_us == 0) {
+        fired = false;
         armTimer(false);
         last_tick_us = 0;
         head = 0;
@@ -445,19 +441,7 @@ pub fn onTimer() bool {
         path_sum = 0;
     }
 
-    const q = quantise(cur_size);
-    if (q != sent_size) {
-        pending_size = q;
-        return true;
-    }
     return false;
-}
-
-fn quantise(v: f32) u32 {
-    const base: f32 = @floatFromInt(config.cursor.size);
-    const max: f32 = @floatFromInt(MAX_SIZE);
-    const snapped = base + @round((v - base) / SIZE_STEP) * SIZE_STEP;
-    return @intFromFloat(@max(base, @min(max, snapped)));
 }
 
 /// Called from the manage cycle. set_xcursor_theme isn't marked manage-only, but

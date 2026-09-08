@@ -56,23 +56,30 @@ pub const cursor = struct {
     /// what reach starts — shells predating the session keep their old env.
     pub var export_env: bool = true;
 
-    /// Shake to find: scrub the mouse, the cursor grows. Two knobs — how long
-    /// you must shake, and how fast it grows. Everything else (the detector
-    /// itself, max size, shrink and hold timing) is derived in shake.zig.
+    /// Shake to find: scrub the mouse and something runs. Two knobs — how long
+    /// you must shake, and what to run. The detector itself is shake.zig.
     pub const shake = struct {
         /// When false, /dev/input is never opened and this costs nothing.
         pub var enabled: bool = false;
 
-        /// How long (ms) you have to keep shaking before the cursor starts
-        /// growing. This is the knob for how easy it is to set off: it is what
-        /// separates a real shake from an ordinary overshoot-and-correct, which
-        /// only looks like one for a moment. Lower = twitchier; 0 = grow the
-        /// instant the motion qualifies.
+        /// How long (ms) you have to keep shaking before it fires. This is the
+        /// knob for how easy it is to set off: it is what separates a real shake
+        /// from an ordinary overshoot-and-correct, which only looks like one for
+        /// a moment. Lower = twitchier; 0 = fire the instant the motion
+        /// qualifies.
         pub var delay: u32 = 150;
 
-        /// How fast it grows, in cursor px per second. It shrinks back at about
-        /// a third of this. 600 goes from `size` to full in roughly 120 ms.
-        pub var speed: f32 = 600.0;
+        /// Run this when a shake is recognised — once per shake, re-arming only
+        /// after the motion stops. Empty = do nothing.
+        ///
+        /// A shake used to grow the cursor, which reach could do because it is
+        /// only a size (`set_xcursor_theme`) and needs no coordinates. Anything
+        /// DRAWN at the cursor is out of reach's hands twice over: it is river's
+        /// window-management client rather than the compositor, so it has no
+        /// surface to paint on, and — see shake.zig's header — it never learns
+        /// where the pointer is. So the gesture is detected here and handed to
+        /// whatever can map a surface.
+        pub var command: [:0]const u8 = "";
     };
 };
 

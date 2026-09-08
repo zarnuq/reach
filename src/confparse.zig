@@ -105,7 +105,7 @@ pub const KeySpec = struct {
 pub const ShakeSpec = struct {
     enabled: ?bool = null,
     delay: ?u32 = null,
-    speed: ?f32 = null,
+    command: ?[:0]const u8 = null,
 };
 
 /// nested `cursor` table.
@@ -369,7 +369,7 @@ fn overlay(fc: FileConfig) void {
         if (c.shake) |s| {
             if (s.enabled) |v| config.cursor.shake.enabled = v;
             if (s.delay) |v| config.cursor.shake.delay = v;
-            if (s.speed) |v| config.cursor.shake.speed = v;
+            if (s.command) |v| config.cursor.shake.command = v;
         }
     }
     if (fc.bar) |b| {
