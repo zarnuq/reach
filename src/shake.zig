@@ -56,6 +56,19 @@ const ABS_Y: u16 = 0x01;
 /// lifting and re-placing doesn't read as one enormous jump across the pad.
 const BTN_TOUCH: u16 = 0x14a;
 
+/// Contact-count tools. A touchpad reports these alongside the single-touch
+/// emulation, and anything past one finger is a gesture (scroll, pinch,
+/// swipe) rather than pointer motion — see `multi` below.
+const BTN_TOOL_QUINTTAP: u16 = 0x148;
+const BTN_TOOL_DOUBLETAP: u16 = 0x14d;
+const BTN_TOOL_TRIPLETAP: u16 = 0x14e;
+const BTN_TOOL_QUADTAP: u16 = 0x14f;
+
+fn isMultiTool(code: u16) bool {
+    return code == BTN_TOOL_DOUBLETAP or code == BTN_TOOL_TRIPLETAP or
+        code == BTN_TOOL_QUADTAP or code == BTN_TOOL_QUINTTAP;
+}
+
 const InputEvent = extern struct {
     sec: i64,
     usec: i64,
@@ -133,6 +146,15 @@ var abs_x: [MAX_DEVICES]i32 = undefined;
 var abs_y: [MAX_DEVICES]i32 = undefined;
 var abs_have_x: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
 var abs_have_y: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
+
+/// More than one finger on the pad. Two-finger scrolling is the shake gesture
+/// exactly: hid-multitouch keeps ABS_X/ABS_Y on the first contact, so repeated
+/// up-down strokes pile travel into a small box and score well above THRESHOLD.
+/// The pointer isn't moving during any of it — the compositor is turning those
+/// contacts into scroll — so the motion is dropped rather than fed to the
+/// detector, and the origin is invalidated on every transition because the
+/// emulated position jumps to whichever contact remains.
+var multi: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
 
 /// Animation tick; armed only while the size is moving.
 pub var timer_fd: ?i32 = null;
@@ -238,6 +260,9 @@ pub fn stop() void {
     for (device_fds[0..device_count]) |fd| _ = C.close(fd);
     device_fds = [_]i32{-1} ** MAX_DEVICES;
     device_count = 0;
+    multi = [_]bool{false} ** MAX_DEVICES;
+    abs_have_x = [_]bool{false} ** MAX_DEVICES;
+    abs_have_y = [_]bool{false} ** MAX_DEVICES;
 
     if (timer_fd) |fd| {
         _ = C.close(fd);
@@ -291,7 +316,7 @@ pub fn onMotion(index: usize) bool {
                 // hands it. The first sample of a touch only sets the origin.
                 // Guarded on `device_abs` so a hybrid device classified relative
                 // can't feed the same motion in twice.
-                EV_ABS => if (device_abs[index]) switch (ev.code) {
+                EV_ABS => if (device_abs[index] and !multi[index]) switch (ev.code) {
                     ABS_X => {
                         if (abs_have_x[index]) acc_x += @floatFromInt(ev.value - abs_x[index]);
                         abs_x[index] = ev.value;
@@ -304,9 +329,15 @@ pub fn onMotion(index: usize) bool {
                     },
                     else => {},
                 },
-                // Finger up: forget the origin, so the next touch landing
-                // elsewhere on the pad isn't counted as travel between the two.
+                // Finger up, or the contact count changing: forget the origin,
+                // so the next position — the next touch landing elsewhere on
+                // the pad, or the emulation snapping to a different contact —
+                // isn't counted as travel between the two.
                 EV_KEY => if (ev.code == BTN_TOUCH and ev.value == 0) {
+                    abs_have_x[index] = false;
+                    abs_have_y[index] = false;
+                } else if (isMultiTool(ev.code)) {
+                    multi[index] = ev.value != 0;
                     abs_have_x[index] = false;
                     abs_have_y[index] = false;
                 },
