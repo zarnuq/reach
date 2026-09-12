@@ -31,6 +31,8 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
   focus cycling includes tiled and floating windows together.
 - **Window rules** — by `app_id`/`title`: force float, assign a desktop, switch to
   it, send to a monitor, set floating geometry.
+- **Scratchpad** — one window (matched by `app_id`) summoned onto the output and
+  desktop you are looking at, and stowed again by the same key.
 - **Monitor configuration** — modes/positions/transforms/scale applied via
   `zwlr_output_manager_v1`, with deterministic config-ordered monitor numbering.
 - **Input configuration** — keyboard repeat rate/delay via river-input-management.
@@ -193,9 +195,32 @@ to arbitrary depth. The available actions are:
 - `view` / `send` — desktop (workspace) operations; both take a 1-based number
 - `zoom`, `killclient`, `quit`
 - `togglefloating`, `togglefullscreen`
+- `togglescratchpad` — summon/stow the `scratchpad` window (see below)
 - `move` / `resize` — keyboard move/resize of a floating window
 - `focusstack`, `setmfact`, `incnmaster`
 - `focusmon`, `sendmon`
+
+### Scratchpad
+
+A scratchpad is a window you summon and stow rather than navigate to — a terminal
+that keeps its shell between glances, a notes buffer, a player. Configure one
+window, by `app_id`:
+
+```zig
+.scratchpad = .{
+    .app_id = "scratchpad",                     // how the window is recognised
+    .command = "kitty --class scratchpad",      // started on the first toggle
+    .w = 0.6, .h = 0.5,                         // size, as a fraction of the output
+},
+```
+
+Bind `.togglescratchpad` (e.g. `Super+grave`). The first press starts the command;
+later presses bring the window to the selected output and the desktop it is
+viewing, or stow it if it is already there — so the key follows you between
+monitors and desktops instead of pointing at wherever the window was left. It is
+always floating and needs no `rules` entry; moving or resizing it sticks, until it
+is summoned onto a different output. Closing it is fine — the next press starts it
+again. With no `app_id` set, the action does nothing.
 
 ## Environment
 

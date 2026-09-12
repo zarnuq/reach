@@ -330,10 +330,11 @@ fn renderDesktops(buffer: *Buffer, out: *Output, h: i32, pad: i32) i32 {
     // arrange() does solely for windows on the *viewed* desktop (and placeFloating
     // for floats). A window opened onto a desktop you aren't viewing (e.g. a rule
     // sending Signal to desktop 4) would then never light up its cell here. Any
-    // managed window homed to this output occupies its desktop, viewed or not.
+    // managed window homed to this output occupies its desktop, viewed or not —
+    // except a stowed scratchpad, which is on a desktop only as bookkeeping.
     var occupied = [_]bool{false} ** config.desktops.count;
     for (ctx.windows.items) |w| {
-        if (w.output == out and w.desktop >= 1 and w.desktop <= config.desktops.count) {
+        if (w.output == out and !w.hidden and w.desktop >= 1 and w.desktop <= config.desktops.count) {
             occupied[w.desktop - 1] = true;
         }
     }

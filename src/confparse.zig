@@ -76,6 +76,7 @@ pub const ActionSpec = union(enum) {
     zoom,
     togglefloating,
     togglefullscreen,
+    togglescratchpad,
     move: DeltaSpec,
     resize: DeltaSpec,
     focusstack: i32,
@@ -116,6 +117,14 @@ pub const CursorSpec = struct {
     shake: ?ShakeSpec = null,
 };
 
+/// nested `scratchpad` table.
+pub const ScratchpadSpec = struct {
+    app_id: ?[]const u8 = null,
+    command: ?[:0]const u8 = null,
+    w: ?f32 = null,
+    h: ?f32 = null,
+};
+
 /// nested `bar` table.
 pub const BarSpec = struct {
     enabled: ?bool = null,
@@ -150,10 +159,28 @@ pub const FileConfig = struct {
     autostart: ?[]const [:0]const u8 = null,
     monitors: ?[]const config.Monitor = null,
     rules: ?[]const config.Rule = null,
+    scratchpad: ?ScratchpadSpec = null,
     cursor: ?CursorSpec = null,
     bar: ?BarSpec = null,
     binds: ?[]const KeySpec = null,
 };
+
+test "the shipped example config parses" {
+    // config.example.zon is installed as /etc/reach/config.zon (the system-wide
+    // fallback), so a typo in it is a broken default session for anyone with no
+    // config of their own — and an unknown key fails the WHOLE parse, dropping
+    // reach to compiled-in defaults with no binds at all. Documenting a new
+    // field there without adding it to the schema is exactly the mistake this
+    // catches.
+    var ar: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer ar.deinit();
+    @setEvalBranchQuota(4000);
+    var diag: std.zon.parse.Diagnostics = .{};
+    _ = std.zon.parse.fromSliceAlloc(FileConfig, ar.allocator(), @embedFile("config.example"), &diag, .{}) catch |err| {
+        std.debug.print("config.example.zon: {}\n{f}\n", .{ err, diag });
+        return err;
+    };
+}
 
 /// Binds parsed from the file, if any. binding.registerForSeat reads this: null
 /// means "no file binds, use the compiled-in default keymap"; non-null fully
@@ -272,6 +299,7 @@ fn snapshotDefaults() void {
     defaults_taken = true;
     defaults = mirror(FileConfig, config);
     defaults.bar = mirror(BarSpec, config.bar);
+    defaults.scratchpad = mirror(ScratchpadSpec, config.scratchpad);
     defaults.cursor = mirror(CursorSpec, config.cursor);
     defaults.cursor.?.shake = mirror(ShakeSpec, config.cursor.shake);
     // `binds` is not a config.zig variable: null means "use the compiled-in
@@ -362,6 +390,12 @@ fn overlay(fc: FileConfig) void {
     if (fc.monitors) |v| config.monitors = v;
     if (fc.rules) |v| config.rules = v;
     if (fc.binds) |v| binds = v;
+    if (fc.scratchpad) |sp| {
+        if (sp.app_id) |v| config.scratchpad.app_id = v;
+        if (sp.command) |v| config.scratchpad.command = v;
+        if (sp.w) |v| config.scratchpad.w = v;
+        if (sp.h) |v| config.scratchpad.h = v;
+    }
     if (fc.cursor) |c| {
         if (c.theme) |v| config.cursor.theme = v;
         if (c.size) |v| config.cursor.size = v;

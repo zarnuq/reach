@@ -81,6 +81,21 @@
         .{ .app_id = "pavucontrol", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
     },
 
+    // --- scratchpad --------------------------------------------------------
+    // One window summoned and stowed with a single key (.togglescratchpad,
+    // bound to Super+grave below) instead of living on a desktop: it comes to
+    // whichever output and desktop you are looking at, and the next press hides
+    // it again with its shell still running. Matched by app_id like a rule;
+    // `command` starts it the first time. Always floating — `w`/`h` are its size
+    // as a fraction of the output, so it needs no `rules` entry. Omit the block
+    // (or leave `app_id` empty) and the action does nothing.
+    .scratchpad = .{
+        .app_id = "scratchpad",
+        .command = "kitty --class scratchpad",
+        .w = 0.6,
+        .h = 0.5,
+    },
+
     // --- the baked-in status bar -------------------------------------------
     .bar = .{
         .font = "JetBrainsMono Nerd Font:size=15",
@@ -112,7 +127,7 @@
     // = list of sub-keys; sub-keys carry no modifier and nest to any depth).
     // Actions: .{ .view = n } / .{ .send = n } (1-based desktop number),
     // .{ .spawn = "cmd" }, .quit, .killclient, .zoom, .togglefloating,
-    // .togglefullscreen, .{ .move = .{ .x=,.y= } }, .{ .resize = ... },
+    // .togglefullscreen, .togglescratchpad, .{ .move = .{ .x=,.y= } }, .{ .resize = ... },
     // .{ .focusstack = n }, .{ .setmfact = f }, .{ .incnmaster = n },
     // .{ .focusmon = n }, .{ .sendmon = n }, .reload.
     //
@@ -187,6 +202,7 @@
         .{ .key = "Super+Return", .action = .zoom },
         .{ .key = "Super+f", .action = .togglefloating },
         .{ .key = "Super+Shift+f", .action = .togglefullscreen },
+        .{ .key = "Super+grave", .action = .togglescratchpad },
 
         // floating move (Super+arrows) / resize (Super+Shift+arrows), step = 40
         .{ .key = "Super+Left", .action = .{ .move = .{ .x = -40 } } },

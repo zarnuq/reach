@@ -49,6 +49,13 @@ pub const Window = struct {
     // when it equals the output's desktop.
     desktop: u32 = 1,
 
+    // Stowed away by the scratchpad toggle: on an output and a desktop, but not
+    // to be shown until it is summoned back. A flag rather than a reserved
+    // desktop number, because desktops are 1-based everywhere (bar cells, IPC
+    // occupancy, rule targets) and a sentinel would have to be excluded by hand
+    // in each of those places.
+    hidden: bool = false,
+
     // Output-relative content geometry, assigned by the layout (tiled) or the
     // float placement. Meaningful once `mapped` is true.
     x: i32 = 0,
@@ -110,7 +117,7 @@ pub const Window = struct {
     /// and on that output's currently-viewed desktop.
     pub fn visible(self: *Window) bool {
         const o = self.output orelse return false;
-        return self.mapped and self.desktop == o.desktop;
+        return self.mapped and !self.hidden and self.desktop == o.desktop;
     }
 
     /// Recompute float state from the current hints. A window floats if it is a
@@ -205,6 +212,16 @@ pub const Window = struct {
         self.float_placed = true;
     }
 
+    /// Does this window's app_id match `pattern`, by the same rules as a window
+    /// rule? The scratchpad is identified this way — by what the window IS, not
+    /// by a flag set when reach spawned it — so a scratchpad that was closed and
+    /// respawned, or one that was already running before reach bound the key, is
+    /// the same scratchpad.
+    pub fn appIdMatches(self: *const Window, pattern: []const u8) bool {
+        if (pattern.len == 0) return false;
+        return patternMatch(pattern, self.app_id);
+    }
+
     /// Match `pattern` against `value` dwl-style: "^foo" anchors a prefix, "foo"
     /// matches as a substring. Null/empty inputs never match.
     fn patternMatch(pattern: []const u8, value: ?[:0]const u8) bool {
@@ -258,6 +275,19 @@ pub const Window = struct {
             if (r.y != 0) self.float_frac_y = r.y;
             if (r.w != 0) self.float_frac_w = r.w;
             if (r.h != 0) self.float_frac_h = r.h;
+        }
+
+        // The scratchpad needs no rule: being the scratchpad already says it is
+        // floating (it overlays the layout rather than joining it) and how big.
+        // Deliberately does NOT set `matched` — the latch below is about the
+        // `rules` list, and leaving it clear costs two string compares per title
+        // change while keeping a later title-only rule matchable.
+        if (self.appIdMatches(config.scratchpad.app_id)) {
+            self.floating = true;
+            self.rule_floating = true; // sticky, as for a rule-floated window
+            // An explicit rule still wins: only fill axes no rule has set.
+            if (self.float_frac_w == 0) self.float_frac_w = config.scratchpad.w;
+            if (self.float_frac_h == 0) self.float_frac_h = config.scratchpad.h;
         }
 
         // Only commit (and stop re-checking) once a rule actually matched, so a

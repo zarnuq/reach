@@ -221,10 +221,10 @@ fn compose() bool {
         // Which desktops hold a window on this output — the bar's occupied dots.
         // Same rule as renderDesktops(): any managed window homed here counts,
         // mapped or not, so a rule that opens an app on an unviewed desktop
-        // lights its cell up.
+        // lights its cell up. A stowed scratchpad is the one exception.
         var occupied = [_]bool{false} ** config.desktops.count;
         for (ctx.windows.items) |w| {
-            if (w.output == o and w.desktop >= 1 and w.desktop <= config.desktops.count) {
+            if (w.output == o and !w.hidden and w.desktop >= 1 and w.desktop <= config.desktops.count) {
                 occupied[w.desktop - 1] = true;
             }
         }

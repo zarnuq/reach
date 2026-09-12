@@ -209,6 +209,41 @@ pub const Rule = struct {
 /// `desktop` is a 1-based desktop number).
 pub var rules: []const Rule = &[_]Rule{};
 
+// ---------------------------------------------------------------------------
+// Scratchpad
+// ---------------------------------------------------------------------------
+//
+// One window you summon and stow with a single key instead of giving it a
+// desktop: a terminal that keeps its shell between glances, a notes buffer, a
+// music player. It is NOT a desktop — a desktop is a place you go to, and the
+// point of this window is that it comes to you, onto whichever output and
+// desktop you are looking at.
+//
+// Identified purely by app_id (same "^prefix" / substring match as rules), so
+// the window reach spawns and the window it later finds are the same thing
+// without any state surviving between them: close it and the next toggle just
+// starts it again.
+//
+// It needs no `rules` entry of its own. A scratchpad is always floating — it
+// overlays the layout rather than joining it — and `w`/`h` below are its size,
+// so the one block is the whole setup.
+
+pub const scratchpad = struct {
+    /// app_id of the scratchpad window. Empty (the default) disables the
+    /// feature: `togglescratchpad` then does nothing at all.
+    pub var app_id: []const u8 = "";
+
+    /// What to run when no window matching `app_id` exists yet, via `/bin/sh -c`.
+    /// It must produce a window with that app_id (e.g. `kitty --class scratch`).
+    pub var command: [:0]const u8 = "";
+
+    /// Size as a fraction of the output it is summoned onto, centered. Follows
+    /// the same per-axis convention as a rule's geometry: <=1 is a fraction,
+    /// >1 is absolute pixels.
+    pub var w: f32 = 0.6;
+    pub var h: f32 = 0.5;
+};
+
 /// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Each face the
 /// focused window shares with a neighbour carries one line, laid just outside that
 /// window's own edge; this is the color of the stretch running alongside it.

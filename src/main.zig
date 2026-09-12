@@ -241,3 +241,14 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
         .global_remove => {},
     }
 }
+
+// `zig test` only collects the tests in the ROOT file, so every test living in
+// an imported module — the action, binding and config-parsing ones — silently
+// did not run: a deliberately false assertion in any of them still passed.
+// Importing a file inside a test block is what pulls its tests into this
+// compilation. Add a line here when a new file grows tests.
+test {
+    _ = @import("action.zig");
+    _ = @import("binding.zig");
+    _ = @import("confparse.zig");
+}

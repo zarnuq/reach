@@ -105,6 +105,13 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // The shipped example config, so a unit test can prove it still parses
+    // against the schema — it is installed as /etc/reach/config.zon, and an
+    // unknown key there costs a user every keybind (confparse.zig).
+    root_mod.addAnonymousImport("config.example", .{
+        .root_source_file = b.path("config.example.zon"),
+    });
+
     // The actual C libraries behind the generated bindings.
     root_mod.linkSystemLibrary("wayland-client", .{});
     // M4 bar: pixman (compositing) + fcft (font rasterization). Both are found
