@@ -14,7 +14,6 @@ const river = wayland.client.river;
 
 const Context = @import("context.zig");
 const config = @import("config.zig");
-const bar = @import("bar.zig");
 
 /// An output-local rectangle.
 pub const Rect = struct { x: i32 = 0, y: i32 = 0, width: i32 = 0, height: i32 = 0 };
@@ -56,12 +55,8 @@ pub const Output = struct {
     nmaster: i32 = 1,
 
     // River window-management v5 reports active capture sessions per output.
-    // Kept as state for a future bar/IPC privacy indicator.
+    // Kept as state for a future IPC privacy indicator.
     capture_sessions: u32 = 0,
-
-    // This output's status bar. null when the bar subsystem is disabled
-    // (no wl_shm / font failed to load) or if its surfaces couldn't be created.
-    bar: ?*bar.Bar = null,
 
     // river_layer_shell_output_v1 handle for this monitor. We use it to mark the
     // selected output as the default for new layer surfaces (rofi etc.) so they
@@ -101,19 +96,15 @@ pub const Output = struct {
         return .{ .x = x, .y = y, .width = @max(0, w), .height = @max(0, h) };
     }
 
-    /// The part of this output available to the window layout, output-local:
-    /// `nonExclusive()` minus the strip reach's own bar sits in.
+    /// The part of this output available to the window layout, output-local.
     ///
-    /// The bar is subtracted HERE rather than by river because it is a
-    /// river_shell_surface_v1, not a layer surface — river's hint only accounts for
-    /// layer surfaces' exclusive zones, so it has no idea the bar is there. Both
-    /// layout.zig and border.zig go through this so the two can't drift.
+    /// Identical to `nonExclusive()` now that reach draws no bar of its own: a
+    /// panel is someone else's layer surface, and its exclusive zone already
+    /// reaches the layout through that. Kept as the name layout.zig and
+    /// border.zig both call, so the two cannot drift if anything is ever carved
+    /// out of the output again.
     pub fn usableArea(self: *const Output) Rect {
-        const bar_h = bar.height();
-        var r = self.nonExclusive();
-        if (config.bar.top) r.y += bar_h;
-        r.height -= bar_h;
-        return r;
+        return self.nonExclusive();
     }
 
     pub fn create(rwm: *river.OutputV1) !*Output {
@@ -133,12 +124,6 @@ pub const Output = struct {
             if (self.layer_output) |lo| lo.setListener(*Output, layerOutputListener, self);
         }
 
-        if (bar.enabled) {
-            self.bar = bar.Bar.create(self) catch |err| blk: {
-                log.warn("create bar failed: {}", .{err});
-                break :blk null;
-            };
-        }
         return self;
     }
 
@@ -206,7 +191,6 @@ pub const Output = struct {
                 // (the protocol leaves the default undefined once ours is gone).
                 if (ctx.layer_default == self) ctx.layer_default = null;
                 if (self.layer_output) |lo| lo.destroy();
-                if (self.bar) |b| b.destroy();
                 if (self.wl_output) |wo| wo.destroy();
                 if (self.name) |n| ctx.gpa.free(n);
                 self.rwm.destroy();

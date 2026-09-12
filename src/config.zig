@@ -209,41 +209,6 @@ pub const Rule = struct {
 /// `desktop` is a 1-based desktop number).
 pub var rules: []const Rule = &[_]Rule{};
 
-// ---------------------------------------------------------------------------
-// Scratchpad
-// ---------------------------------------------------------------------------
-//
-// One window you summon and stow with a single key instead of giving it a
-// desktop: a terminal that keeps its shell between glances, a notes buffer, a
-// music player. It is NOT a desktop — a desktop is a place you go to, and the
-// point of this window is that it comes to you, onto whichever output and
-// desktop you are looking at.
-//
-// Identified purely by app_id (same "^prefix" / substring match as rules), so
-// the window reach spawns and the window it later finds are the same thing
-// without any state surviving between them: close it and the next toggle just
-// starts it again.
-//
-// It needs no `rules` entry of its own. A scratchpad is always floating — it
-// overlays the layout rather than joining it — and `w`/`h` below are its size,
-// so the one block is the whole setup.
-
-pub const scratchpad = struct {
-    /// app_id of the scratchpad window. Empty (the default) disables the
-    /// feature: `togglescratchpad` then does nothing at all.
-    pub var app_id: []const u8 = "";
-
-    /// What to run when no window matching `app_id` exists yet, via `/bin/sh -c`.
-    /// It must produce a window with that app_id (e.g. `kitty --class scratch`).
-    pub var command: [:0]const u8 = "";
-
-    /// Size as a fraction of the output it is summoned onto, centered. Follows
-    /// the same per-axis convention as a rule's geometry: <=1 is a fraction,
-    /// >1 is absolute pixels.
-    pub var w: f32 = 0.6;
-    pub var h: f32 = 0.5;
-};
-
 /// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Each face the
 /// focused window shares with a neighbour carries one line, laid just outside that
 /// window's own edge; this is the color of the stretch running alongside it.
@@ -288,71 +253,4 @@ pub const desktops = struct {
 
     /// Labels shown in the bar. `names[d - 1]` is the label for desktop `d`.
     pub const names = [_][]const u8{ "1", "2", "3", "4", "5", "6", "7", "8", "9" };
-};
-
-// ---------------------------------------------------------------------------
-// The baked-in status bar (dwlb-style)
-// ---------------------------------------------------------------------------
-//
-// One bar is drawn at the top of every output. Layout left→right:
-//   [layout symbol] [ window title .......... ] [ status text ]
-// Colors below mirror the user's dwlb defaults (Catppuccin Mocha). The KEY
-// behavior: the bar on the *focused* monitor uses the `select` scheme for its
-// title region (mauve), every other monitor uses `normal` (dark) — exactly how
-// dwlb reacts to dwl's per-output `active` IPC event, except here reach is
-// the WM and knows the focused output directly (no IPC needed).
-
-pub const bar = struct {
-    /// Draw the bar at all. False leaves the strip to the windows (height() is 0,
-    /// so usableArea() reclaims it) and keeps the status blocks from running —
-    /// for a session whose panel is an external layer-shell client instead.
-    pub var enabled: bool = true;
-
-    /// fontconfig name. fcft resolves this; a generic monospace is the default so
-    /// the bar renders without assuming a specific (e.g. Nerd) font is installed.
-    pub var font: [:0]const u8 = "monospace:size=12";
-
-    /// Draw the bar at the top of the output (false = bottom).
-    pub var top: bool = true;
-
-    /// Colors as 0xRRGGBBAA.
-    ///   normal_* — unfocused monitors / default text.
-    ///   select_* — the focused monitor's title region (the "this monitor is
-    ///              active" highlight).
-    ///   status_* — the someblocks status text on the right.
-    pub var normal_fg: u32 = 0x7f849cff;
-    pub var normal_bg: u32 = 0x1e1e2eff;
-    pub var select_fg: u32 = 0xffffffff;
-    pub var select_bg: u32 = 0xcba6f7ff;
-    pub var status_fg: u32 = 0x7f849cff;
-    pub var status_bg: u32 = 0x1e1e2eff;
-
-    // -----------------------------------------------------------------------
-    // Status blocks (someblocks baked in)
-    // -----------------------------------------------------------------------
-    //
-    // reach runs these itself — no external someblocks process or fifo.
-    // Each block is `icon ++ first line of <command> stdout`, and the blocks are
-    // joined left→right by `delim`. Semantics match suckless someblocks:
-    //   interval — re-run every N seconds (0 = never on a timer).
-    //   signal   — also re-run when reach receives SIGRTMIN+<signal>
-    //              (e.g. `kill -35 $(pidof reach)` refreshes signal 1).
-    // Commands run via `/bin/sh -c`, so `$HOME`, pipes, etc. all work.
-
-    pub const Block = struct {
-        icon: []const u8,
-        command: []const u8,
-        interval: u32,
-        signal: u8,
-    };
-
-    /// Separator drawn between adjacent blocks.
-    pub var delim: []const u8 = "|";
-
-    /// Ported from the user's ~/.local/src/someblocks/blocks.h.
-    /// Minimal default: just a clock. Add your own blocks in config.zon's
-    /// `bar.blocks` (each is icon ++ first line of the command's stdout).
-    pub var blocks: []const Block = &[_]Block{
-        .{ .icon = "", .command = "date '+%a %m/%d %I:%M %p'", .interval = 1, .signal = 0 },
-    };
 };

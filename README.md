@@ -7,8 +7,8 @@ architecture. ("reach" = a straight stretch of a river.)
 river 0.4.x is a *non-monolithic* compositor: river is **only** the compositor
 (it renders, handles input, talks to DRM/the GPU). The window manager is a
 **separate client process** — this one — that speaks the
-`river-window-management-v1` protocol and decides layout, focus, borders, and the
-bar. reach is that window manager. It is configured through compiled-in defaults
+`river-window-management-v1` protocol and decides layout, focus and borders.
+reach is that window manager. It is configured through compiled-in defaults
 plus an optional `config.zon` file (see [Configuration](#configuration)).
 
 ## Features
@@ -22,28 +22,27 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
   the rest of the same line.
 - **Virtual desktops** — 9 of them; each output views exactly one, each window
   lives on exactly one. View a desktop, or send the focused window to one.
-- **Built-in status bar** — drawn on every output; status blocks run
-  *in-process* (no external bar or block helper, no fifo). Per-block intervals
-  and `SIGRTMIN+n` signal refresh are supported.
+- **State socket** — desktops, focus, window titles and per-output occupancy
+  published as JSON snapshots on a unix socket, for a panel to draw. reach has
+  no bar of its own: drawing one is a job for a layer-shell client, and this is
+  the state such a client cannot otherwise obtain.
 - **Keybindings + multi-key chords** — arbitrary-depth chord tries built on
   river's submap primitive.
 - **Floating windows** — toggle float, fullscreen, keyboard move/resize; stack
   focus cycling includes tiled and floating windows together.
 - **Window rules** — by `app_id`/`title`: force float, assign a desktop, switch to
   it, send to a monitor, set floating geometry.
-- **Scratchpad** — one window (matched by `app_id`) summoned onto the output and
-  desktop you are looking at, and stowed again by the same key.
 - **Monitor configuration** — modes/positions/transforms/scale applied via
   `zwlr_output_manager_v1`, with deterministic config-ordered monitor numbering.
 - **Input configuration** — keyboard repeat rate/delay via river-input-management.
 - **Autostart**, **cursor warp**, **focus-follows-mouse** (sloppy focus), and
   **session env** (`setenv` before autostart).
 - **Live config reload** — `SIGHUP` or a keybind re-reads `config.zon` and rebuilds
-  keybinds, colors, rules, blocks, bar font and monitors in place; a config that
-  doesn't parse is rejected without disturbing the running session.
+  keybinds, colors, rules and monitors in place; a config that doesn't parse is
+  rejected without disturbing the running session.
 
 Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
-(floating itself works via keyboard, above) and bar desktop clicks.
+(floating itself works via keyboard, above).
 
 ## Build
 
@@ -104,8 +103,8 @@ reproduces the defaults, so it is a working starting point.
 
 Configurable: gaps, sloppy focus, keyboard repeat, session env, autostart,
 monitors (mode/position/transform/scale, matched by connector name), window rules,
-master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width, the
-bar (font, colors, status blocks), and the full keymap.
+master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width, and
+the full keymap.
 
 ### Live reload
 
@@ -116,8 +115,7 @@ kill -HUP $(pidof reach)     # or press Super+Shift+r
 ```
 
 Reload rebuilds everything the file drives: colors, gaps, `nmaster`/`mfact`,
-borders, window rules, the keymap (including chords), status blocks, the bar font,
-and monitor configuration. A malformed file is reported with a line/column error
+borders, window rules, the keymap (including chords), and monitor configuration. A malformed file is reported with a line/column error
 and **is not applied at all** — the session keeps running on the config it already
 had, so a bad edit costs you a log line rather than your keybindings.
 
@@ -195,32 +193,33 @@ to arbitrary depth. The available actions are:
 - `view` / `send` — desktop (workspace) operations; both take a 1-based number
 - `zoom`, `killclient`, `quit`
 - `togglefloating`, `togglefullscreen`
-- `togglescratchpad` — summon/stow the `scratchpad` window (see below)
 - `move` / `resize` — keyboard move/resize of a floating window
 - `focusstack`, `setmfact`, `incnmaster`
 - `focusmon`, `sendmon`
 
-### Scratchpad
+## State socket
 
-A scratchpad is a window you summon and stow rather than navigate to — a terminal
-that keeps its shell between glances, a notes buffer, a player. Configure one
-window, by `app_id`:
+reach draws no bar. Everything a panel would need to draw one — which desktop each
+output is viewing, which desktops hold windows, which output is focused, and the
+focused window's title and `app_id` — is published on a `SOCK_STREAM` unix socket
+at `$XDG_RUNTIME_DIR/reach.sock`:
 
-```zig
-.scratchpad = .{
-    .app_id = "scratchpad",                     // how the window is recognised
-    .command = "kitty --class scratchpad",      // started on the first toggle
-    .w = 0.6, .h = 0.5,                         // size, as a fraction of the output
-},
+```json
+{"desktops":9,"outputs":[{"name":"DP-2","desktop":1,"focused":true,"fullscreen":false,"occupied":[1,3],"title":"nvim","appId":"kitty"}]}
 ```
 
-Bind `.togglescratchpad` (e.g. `Super+grave`). The first press starts the command;
-later presses bring the window to the selected output and the desktop it is
-viewing, or stow it if it is already there — so the key follows you between
-monitors and desktops instead of pointing at wherever the window was left. It is
-always floating and needs no `rules` entry; moving or resizing it sticks, until it
-is summoned onto a different output. Closing it is fine — the next press starts it
-again. With no `app_id` set, the action does nothing.
+One line per change, and each line is a **complete** snapshot rather than a delta:
+a client that connects late or reconnects is immediately correct, with no resync
+step and no ordering to get wrong. The first line arrives on connect. Publishing
+is driven from the render cycle, so a panel is as live as the windows are, and
+composing is skipped entirely when nothing is connected.
+
+The socket is **write-only**: client fds are read only to notice a disconnect, and
+anything sent to reach is discarded. A `view <n>` command for clickable desktop
+cells would have to name its output as well — desktop actions act on the *selected*
+output, so a click on an unfocused monitor would switch the focused one — and that
+is a focus-semantics decision, not one a status socket should make. A panel that
+needs to drive the window manager has keybinds and `spawn`.
 
 ## Environment
 

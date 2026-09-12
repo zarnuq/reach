@@ -32,22 +32,6 @@
             .hash = "wayland-0.6.0-lQa1kqz8AQADQmdNJsNhLoNHcnEGEUjrOaPV-dtEnEmX",
         },
 
-        // M4 bar dependencies — the same packages kwm and dwlb use, so the bar
-        // renders identically (Nerd Font glyphs, antialiasing, color markup):
-        //   pixman — software image compositing (fill rects, blit glyphs).
-        //   fcft   — font loading + glyph rasterization (wraps freetype/fontconfig);
-        //            handles "JetBrainsMono Nerd Font:size=11" exactly like dwlb.
-        // The `^fg(RRGGBB)` color escapes in status text are hand-parsed (see
-        // bar.zig), so no regex dependency is needed.
-        .pixman = .{
-            .url = "https://codeberg.org/ifreund/zig-pixman/archive/v0.3.0.tar.gz",
-            .hash = "pixman-0.3.0-LClMnz2VAAAs7QSCGwLimV5VUYx0JFnX5xWU6HwtMuDX",
-        },
-        .fcft = .{
-            .url = "https://github.com/kewuaa/zig-fcft/archive/refs/tags/v2.0.0.tar.gz",
-            .hash = "fcft-2.0.0-zcx6C5EaAADIEaQzDg5D4UvFFMjSEwDE38vdE9xObeN9",
-        },
-
         // NOTE: zig-xkbcommon will be added at the keychord milestone (M5).
     },
 

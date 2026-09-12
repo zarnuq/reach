@@ -19,13 +19,11 @@
 //   3. floating windows    — above both the tiling and a tiled window's border.
 //   4. floating-focus ring — above the focused float so its inset outline is seen.
 //   5. fullscreen windows  — own the output outright, floats and borders included.
-//   5b. the scratchpad     — above even that: it is an overlay you summoned on
-//                            top of whatever you were doing, and a summoned
-//                            window you cannot see is worse than a covered
-//                            fullscreen one.
-//   6. bars                — always on top, save where a fullscreen window hid them.
+//
+// The bar is not in this list: it is an ordinary layer surface belonging to
+// another client, and the compositor stacks layer surfaces above everything the
+// window manager places.
 
-const config = @import("config.zig");
 const Context = @import("context.zig");
 const border = @import("border.zig");
 
@@ -69,23 +67,6 @@ pub fn apply() void {
         if (w.visible() and w.fullscreen) w.node.placeTop();
     }
 
-    // Layer 5b. The scratchpad is only on screen while it is summoned, so this
-    // is not a window quietly outranking a fullscreen one — it is the one the
-    // user just asked for. Its focus ring has to follow it up: the ring is drawn
-    // INSET, so a node placed above it would cover the outline.
-    if (config.scratchpad.app_id.len != 0) {
-        for (ctx.windows.items) |w| {
-            if (!w.visible() or w.fullscreen) continue;
-            if (!w.appIdMatches(config.scratchpad.app_id)) continue;
-            w.node.placeTop();
-            if (ctx.focused == w) border.raise();
-        }
-    }
-
-    // Layer 6. `raise` is a no-op for a bar hidden by a fullscreen window.
-    for (ctx.outputs.items) |o| {
-        if (o.bar) |b| b.raise();
-    }
 }
 
 const Layer = enum { tiled, floating };

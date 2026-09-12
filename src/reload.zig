@@ -3,8 +3,8 @@
 //
 // WHY THIS IS ITS OWN FILE: reloading is almost entirely a question of ORDERING.
 // The individual "restart yourself" hooks are small and live with their
-// subsystems (binding.teardown, status.restart, bar.reloadFont, shake.stop,
-// outputconfig.reapply); what is easy to get wrong is the sequence they run in,
+// subsystems (binding.teardown, shake.stop, outputconfig.reapply); what is easy
+// to get wrong is the sequence they run in,
 // and that sequence is what this file is.
 //
 // Two invariants drive the whole design:
@@ -33,11 +33,9 @@ const log = std.log.scoped(.reload);
 const config = @import("config.zig");
 const confparse = @import("confparse.zig");
 const Context = @import("context.zig");
-const bar = @import("bar.zig");
 const binding = @import("binding.zig");
 const outputconfig = @import("outputconfig.zig");
 const shake = @import("shake.zig");
-const status = @import("status.zig");
 
 /// A reload has been asked for and will be applied by the next manage cycle.
 var pending: bool = false;
@@ -65,8 +63,6 @@ pub fn apply() void {
     // What the old generation says, captured before it is displaced — these decide
     // which subsystems actually need rebuilding below. They BORROW the outgoing
     // arena, so every comparison against them has to happen before `release`.
-    const old_font = config.bar.font;
-    const old_bar_enabled = config.bar.enabled;
     const old_cursor = cursorSettings();
     const old_monitors = config.monitors;
 
@@ -78,24 +74,11 @@ pub fn apply() void {
 
     // Diff the two generations while BOTH are still alive. Doing this after the
     // release below would be reading freed memory.
-    const font_changed = !std.mem.eql(u8, old_font, config.bar.font);
-    const bar_toggled = old_bar_enabled != config.bar.enabled;
     const cursor_changed = !cursorEql(old_cursor, cursorSettings());
     const monitors_changed = !monitorsEql(old_monitors, config.monitors);
 
     // Nothing points into the outgoing generation any more.
     confparse.release(gpa, previous);
-
-    // Status blocks: the slice was just replaced, so re-run them all. Skipped
-    // with the bar off — nothing reads the text, so running the commands is pure
-    // subprocess churn (startup gates status.start() the same way).
-    if (bar.enabled) status.restart();
-
-    // Font: reloading is not free (fcft re-shapes every glyph) and a height change
-    // forces every bar surface to be rebuilt, so only touch it if the name moved.
-    if (font_changed or bar_toggled) {
-        if (bar.reloadFont(gpa)) recreateBars();
-    }
 
     // Cursor/shake: re-open pointer devices only if something it depends on moved.
     if (cursor_changed) {
@@ -151,19 +134,3 @@ fn monitorsEql(a: []const config.Monitor, b: []const config.Monitor) bool {
     return true;
 }
 
-/// Rebuild every output's bar surface. Needed when the font height changes: the
-/// bar's shm buffers are sized to it, and the layout reserves that height.
-fn recreateBars() void {
-    const ctx = Context.get();
-    for (ctx.outputs.items) |o| {
-        if (o.bar) |b| {
-            b.destroy();
-            o.bar = null;
-        }
-        if (!bar.enabled) continue;
-        o.bar = bar.Bar.create(o) catch |err| blk: {
-            log.warn("recreate bar failed: {}", .{err});
-            break :blk null;
-        };
-    }
-}

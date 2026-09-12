@@ -9,11 +9,10 @@
 // change and the compiled-in default (config.zig) is used. This file reproduces
 // the built-in defaults, so with it in place reach behaves exactly as without it —
 // edit from here. For a distro package, trim the machine-specific bits (monitors,
-// env) to taste; binds/blocks reference $HOME so they are user-portable as-is.
+// env) to taste; binds reference $HOME so they are user-portable as-is.
 //
 // Syntax is ZON (Zig Object Notation): `.{ ... }` is a struct, `.field = value`,
-// strings in "quotes", enums as `.name`. Colors are 0xRRGGBB (border) or 0xRRGGBBAA
-// (bar). A bind's `key` is "Mod+Mod+...+Keysym": modifiers (case-insensitive
+// strings in "quotes", enums as `.name`. Colors are 0xRRGGBB. A bind's `key` is "Mod+Mod+...+Keysym": modifiers (case-insensitive
 // Super/Mod/Win, Alt, Ctrl, Shift, Mod3, Mod5) then the xkb keysym NAME, joined by
 // '+'. Letters/digits are themselves ("q", "1"); everything else uses its xkb name
 // ("Return", "space", "comma", "bracketleft", "XF86AudioPlay", "plus"). A chord
@@ -81,44 +80,6 @@
         .{ .app_id = "pavucontrol", .floating = true, .x = 0.25, .y = 0.25, .w = 0.5, .h = 0.5 },
     },
 
-    // --- scratchpad --------------------------------------------------------
-    // One window summoned and stowed with a single key (.togglescratchpad,
-    // bound to Super+grave below) instead of living on a desktop: it comes to
-    // whichever output and desktop you are looking at, and the next press hides
-    // it again with its shell still running. Matched by app_id like a rule;
-    // `command` starts it the first time. Always floating — `w`/`h` are its size
-    // as a fraction of the output, so it needs no `rules` entry. Omit the block
-    // (or leave `app_id` empty) and the action does nothing.
-    .scratchpad = .{
-        .app_id = "scratchpad",
-        .command = "kitty --class scratchpad",
-        .w = 0.6,
-        .h = 0.5,
-    },
-
-    // --- the baked-in status bar -------------------------------------------
-    .bar = .{
-        .font = "JetBrainsMono Nerd Font:size=15",
-        .top = true,
-        .normal_fg = 0x7f849cff,
-        .normal_bg = 0x1e1e2eff,
-        .select_fg = 0xffffffff,
-        .select_bg = 0xcba6f7ff,
-        .status_fg = 0x7f849cff,
-        .status_bg = 0x1e1e2eff,
-        .delim = "|",
-        // someblocks, in-process. Each block = icon ++ first line of command
-        // stdout; re-run every `interval` s and/or on SIGRTMIN+`signal`.
-        .blocks = .{
-            .{ .icon = "", .command = "$HOME/.config/reach/blocks/ip.sh", .interval = 30, .signal = 0 },
-            .{ .icon = "", .command = "$HOME/.config/reach/blocks/audio.sh", .interval = 60, .signal = 1 },
-            .{ .icon = "", .command = "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]\\+%' | head -1", .interval = 1, .signal = 1 },
-            .{ .icon = "", .command = "$HOME/.config/reach/blocks/mic.sh", .interval = 1, .signal = 2 },
-            .{ .icon = "", .command = "date '+%a %m/%d %I:%M %p'", .interval = 1, .signal = 0 },
-            .{ .icon = "", .command = "$HOME/.config/reach/blocks/battery.sh", .interval = 30, .signal = 0 },
-        },
-    },
-
     // --- keybindings -------------------------------------------------------
     // Providing `binds` REPLACES the entire default action/spawn/chord keymap
     // (dwl-style: your config is the config). The desktop binds — Super+1..9 view,
@@ -127,12 +88,12 @@
     // = list of sub-keys; sub-keys carry no modifier and nest to any depth).
     // Actions: .{ .view = n } / .{ .send = n } (1-based desktop number),
     // .{ .spawn = "cmd" }, .quit, .killclient, .zoom, .togglefloating,
-    // .togglefullscreen, .togglescratchpad, .{ .move = .{ .x=,.y= } }, .{ .resize = ... },
+    // .togglefullscreen, .{ .move = .{ .x=,.y= } }, .{ .resize = ... },
     // .{ .focusstack = n }, .{ .setmfact = f }, .{ .incnmaster = n },
     // .{ .focusmon = n }, .{ .sendmon = n }, .reload.
     //
     // .reload re-reads THIS FILE and rebuilds everything it drives — colors, gaps,
-    // layout, rules, status blocks, keybinds, bar font, monitors — without
+    // layout, rules, keybinds, monitors — without
     // restarting the session. `kill -HUP $(pidof reach)` does the same thing. A
     // file that fails to parse is not applied at all (the running config stays),
     // so a typo costs you a log line rather than your keybindings. Two things are
@@ -165,7 +126,6 @@
             .{ .key = "b", .action = .{ .spawn = "brave" } },
             .{ .key = "a", .action = .{ .spawn = "pavucontrol" } },
             .{ .key = "s", .action = .{ .spawn = "exec steam </dev/null >/dev/null 2>&1" } },
-            .{ .key = "w", .action = .{ .spawn = "$HOME/.local/bin/runbar.sh" } },
         } },
         .{ .key = "Super+s", .chord = .{
             .{ .key = "s", .action = .{ .spawn = "$HOME/.local/bin/screenshot.sh ss && notify-send Screenshot 'Quick capture saved!'" } },
@@ -202,7 +162,6 @@
         .{ .key = "Super+Return", .action = .zoom },
         .{ .key = "Super+f", .action = .togglefloating },
         .{ .key = "Super+Shift+f", .action = .togglefullscreen },
-        .{ .key = "Super+grave", .action = .togglescratchpad },
 
         // floating move (Super+arrows) / resize (Super+Shift+arrows), step = 40
         .{ .key = "Super+Left", .action = .{ .move = .{ .x = -40 } } },

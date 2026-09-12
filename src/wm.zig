@@ -22,7 +22,7 @@ const border = @import("border.zig");
 const stack = @import("stack.zig");
 const binding = @import("binding.zig");
 const action = @import("action.zig");
-const status = @import("status.zig");
+const signals = @import("signals.zig");
 const shake = @import("shake.zig");
 const reload = @import("reload.zig");
 const ipc = @import("ipc.zig");
@@ -42,10 +42,10 @@ pub fn deinit() void {
     // come later if we ever need a graceful in-process restart.
 }
 
-/// The event loop: poll() over the Wayland fd plus the status engine's 1s timerfd
-/// and real-time-signal fd, shake-to-find's pointer devices and animation tick,
-/// and the state socket's listener plus its connected clients (all optional;
-/// added to the set only when present).
+/// The event loop: poll() over the Wayland fd plus the SIGHUP signalfd,
+/// shake-to-find's pointer devices and animation tick, and the state socket's
+/// listener plus its connected clients (all optional; added to the set only when
+/// present).
 pub fn run(display: *wl.Display) !void {
     const ctx = Context.get();
     const wl_fd = display.getFd();
@@ -54,13 +54,12 @@ pub fn run(display: *wl.Display) !void {
         _ = display.flush();
 
         // Slot 0 is always Wayland; the rest are added when their subsystem is
-        // live. Sized for wayland + status timer/signal + shake timer + devices
-        // + the ipc listener and its clients.
-        var fds: [5 + shake.device_fds.len + ipc.max_clients]std.posix.pollfd = undefined;
+        // live. Sized for wayland + the signalfd + shake timer + devices + the
+        // ipc listener and its clients.
+        var fds: [4 + shake.device_fds.len + ipc.max_clients]std.posix.pollfd = undefined;
         var n: usize = 1;
         fds[0] = .{ .fd = wl_fd, .events = std.posix.POLL.IN, .revents = 0 };
-        const timer_slot = addFd(&fds, &n, status.timer_fd);
-        const signal_slot = addFd(&fds, &n, status.signal_fd);
+        const signal_slot = addFd(&fds, &n, signals.fd);
         const shake_timer_slot = addFd(&fds, &n, shake.timer_fd);
         const shake_first = n;
         for (shake.device_fds[0..shake.device_count]) |fd| _ = addFd(&fds, &n, fd);
@@ -78,19 +77,12 @@ pub fn run(display: *wl.Display) !void {
             if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
         }
 
-        // A block re-ran (timer tick or refresh signal) and the text changed →
-        // ask river for a fresh manage/render cycle so the bars redraw.
         var dirty = false;
-        if (timer_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
-            if (status.onTimer()) dirty = true;
-        };
+        // `kill -HUP $(pidof reach)` reloads config.zon. Like every other reload
+        // trigger it only sets the request; manageDirty gets us the manage cycle
+        // that applies it.
         if (signal_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
-            if (status.onSignal()) dirty = true;
-            // SIGHUP arrived on the same fd: `kill -HUP $(pidof reach)` reloads
-            // config.zon. Like every other reload trigger it only sets the
-            // request; manageDirty gets us the manage cycle that applies it.
-            if (status.hup_received) {
-                status.hup_received = false;
+            if (signals.onSignal()) {
                 reload.request();
                 dirty = true;
             }
@@ -191,8 +183,8 @@ fn manageCycle() void {
     shake.applyPending();
 }
 
-/// RENDER: position and show every window, draw the tmux borders and the bars,
-/// then order the scene.
+/// RENDER: position and show every window, draw the tmux borders, then order the
+/// scene.
 ///
 /// Content first, z-order last, and deliberately separate: what a thing looks like
 /// and what it sits in front of are independent questions, and folding the second
@@ -202,14 +194,11 @@ fn renderCycle() void {
     const ctx = Context.get();
     for (ctx.windows.items) |w| w.render();
     border.update();
-    for (ctx.outputs.items) |o| {
-        if (o.bar) |b| b.render();
-    }
     stack.apply();
 
-    // Publish the same state the bar just drew, for an external one. Here rather
-    // than anywhere else so both bars update on the same beat; a no-op when the
-    // state is unchanged or nothing is listening.
+    // Publish the desktop/focus/title state for a panel to draw. Here because a
+    // render cycle is exactly when it can have changed; a no-op when the state is
+    // unchanged or nothing is listening.
     ipc.publish();
 }
 

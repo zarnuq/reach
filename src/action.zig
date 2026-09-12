@@ -48,9 +48,6 @@ pub const Action = union(enum) {
     zoom,
     togglefloating,
     togglefullscreen,
-    // Summon the scratchpad window here, or stow it if it is already here
-    // (config.scratchpad). No-op when no scratchpad app_id is configured.
-    togglescratchpad,
     // Floating geometry (keyboard). Both only act on the focused window while it
     // is floating; no-ops otherwise.
     move: Delta,
@@ -79,7 +76,6 @@ pub fn toAction(a: confparse.ActionSpec) Action {
         .zoom => .zoom,
         .togglefloating => .togglefloating,
         .togglefullscreen => .togglefullscreen,
-        .togglescratchpad => .togglescratchpad,
         .move => |d| .{ .move = .{ .x = d.x, .y = d.y } },
         .resize => |d| .{ .resize = .{ .x = d.x, .y = d.y } },
         .focusstack => |v| .{ .focusstack = v },
@@ -165,13 +161,6 @@ pub fn execute(action: Action) void {
         },
         .togglefullscreen => {
             if (ctx.focused) |f| f.fullscreen = !f.fullscreen;
-        },
-        // Summoning moves the keyboard selection onto a window that just
-        // appeared somewhere the pointer isn't, so it warps like the other
-        // focus-moving actions; stowing doesn't move the selection anywhere in
-        // particular, so it doesn't.
-        .togglescratchpad => {
-            if (toggleScratchpad() == .summoned) requestWarp();
         },
         // Floating move/resize. The press is followed by a manage cycle, and
         // float_placed stays set, so the change sticks (placeFloating won't reset).
@@ -396,80 +385,6 @@ fn sendToMonitor(dir: i32) void {
 
     w.output = next_out;
     refocus(cur);
-}
-
-// ---------------------------------------------------------------------------
-// Scratchpad
-// ---------------------------------------------------------------------------
-
-/// What a toggle did, so `execute` knows whether the selection moved.
-const Scratch = enum { summoned, stowed, nothing };
-
-/// Is the scratchpad on screen *for this output* — the only sense in which the
-/// key that summons it should stow it again? A scratchpad showing on another
-/// monitor, or left behind on another desktop, is not "here", and pressing the
-/// key is a request to bring it rather than to dismiss it.
-fn showingOn(w: *const Window, out: *const Output) bool {
-    return !w.hidden and w.output == out and w.desktop == out.desktop;
-}
-
-test "the scratchpad counts as showing only on the output and desktop it is on" {
-    var here = Output{ .rwm = undefined, .desktop = 2 };
-    var elsewhere = Output{ .rwm = undefined, .desktop = 2 };
-    const shown = Window{ .rwm = undefined, .node = undefined, .output = &here, .desktop = 2 };
-    const stowed = Window{ .rwm = undefined, .node = undefined, .output = &here, .desktop = 2, .hidden = true };
-    const other_desktop = Window{ .rwm = undefined, .node = undefined, .output = &here, .desktop = 3 };
-    const other_output = Window{ .rwm = undefined, .node = undefined, .output = &elsewhere, .desktop = 2 };
-
-    try std.testing.expect(showingOn(&shown, &here));
-    try std.testing.expect(!showingOn(&stowed, &here));
-    try std.testing.expect(!showingOn(&other_desktop, &here));
-    try std.testing.expect(!showingOn(&other_output, &here));
-}
-
-/// The scratchpad window, or null if it isn't running (or isn't configured).
-/// The first match wins: a second window with the same app_id is an ordinary
-/// window, not a second scratchpad.
-fn findScratchpad() ?*Window {
-    const ctx = Context.get();
-    for (ctx.windows.items) |w| {
-        if (w.appIdMatches(config.scratchpad.app_id)) return w;
-    }
-    return null;
-}
-
-/// Stow the scratchpad if it is on screen here, otherwise bring it here — and
-/// start it if it isn't running at all. "Here" is the selected output and the
-/// desktop it is viewing, so the same key follows you between monitors and
-/// desktops rather than pointing at wherever the window was left.
-fn toggleScratchpad() Scratch {
-    const ctx = Context.get();
-    if (config.scratchpad.app_id.len == 0) return .nothing;
-    const out = query.selectedOutput() orelse return .nothing;
-
-    const s = findScratchpad() orelse {
-        // Not running. Spawning IS the summon: the window lands on the selected
-        // output (wm.zig homes new windows there) and applyRules floats and sizes
-        // it the moment its app_id arrives.
-        if (config.scratchpad.command.len != 0) spawn(config.scratchpad.command);
-        return .nothing; // nothing to warp to yet — the window doesn't exist
-    };
-
-    if (showingOn(s, out)) {
-        s.hidden = true;
-        refocus(out);
-        return .stowed;
-    }
-
-    // Re-place the geometry only when it changes output: within one output, a
-    // scratchpad the user has moved or resized should come back where they left
-    // it, and float_placed is what protects that (see Window.placeFloating).
-    if (s.output != out) s.float_placed = false;
-    s.output = out;
-    s.desktop = out.desktop;
-    s.hidden = false;
-    ctx.focused = s;
-    return .summoned;
 }
 
 // ---------------------------------------------------------------------------

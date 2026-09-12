@@ -1,11 +1,12 @@
-// ipc.zig — the state socket: what the bar needs, for a bar that isn't ours.
+// ipc.zig — the state socket: what a bar needs, for a bar that isn't ours.
 //
-// The baked-in bar (bar.zig) reads window-manager state by *being inside* the
-// window manager — query.selectedOutput(), out.desktop, query.topVisibleOn() are
-// direct reads of the Context. An external panel (a layer-shell client such as
+// reach draws no bar. A panel inside the window manager could read its state
+// directly — query.selectedOutput(), out.desktop, query.topVisibleOn() are plain
+// reads of the Context — but an external one (a layer-shell client such as
 // quickshell) has no such access: river is non-monolithic, so reach IS the window
 // manager and there is no compositor-side workspace protocol for a bar to bind.
-// Nothing about desktops, focus or titles leaves this process unless we send it.
+// Nothing about desktops, focus or titles leaves this process unless we send it,
+// which is what makes this socket the whole interface rather than a convenience.
 //
 // So: a SOCK_STREAM unix socket at $XDG_RUNTIME_DIR/reach.sock. On connect a
 // client gets one JSON line describing every output; after that it gets a new
@@ -13,8 +14,8 @@
 // deltas to apply and no ordering to get wrong, so a client that reconnects is
 // immediately correct with no resync step.
 //
-// Publishing is driven from the render cycle (wm.zig), the same beat that redraws
-// the baked-in bar, so an external bar is exactly as live as the internal one.
+// Publishing is driven from the render cycle (wm.zig) — a render is exactly when
+// this state can have changed, so a panel is as live as the windows themselves.
 // It costs nothing when unused: with no client connected, publish() returns
 // before composing anything.
 //
@@ -24,7 +25,7 @@
 // output too — action.view acts on query.selectedOutput(), so a click on an
 // unfocused monitor's bar would switch the focused one — and moving the
 // selection is a focus-semantics decision, not something a status socket should
-// make on its own.
+// make on its own. A panel that wants to act on the WM has keybinds and `spawn`.
 
 const std = @import("std");
 const linux = std.os.linux;
@@ -221,10 +222,10 @@ fn compose() bool {
         // Which desktops hold a window on this output — the bar's occupied dots.
         // Same rule as renderDesktops(): any managed window homed here counts,
         // mapped or not, so a rule that opens an app on an unviewed desktop
-        // lights its cell up. A stowed scratchpad is the one exception.
+        // lights its cell up.
         var occupied = [_]bool{false} ** config.desktops.count;
         for (ctx.windows.items) |w| {
-            if (w.output == o and !w.hidden and w.desktop >= 1 and w.desktop <= config.desktops.count) {
+            if (w.output == o and w.desktop >= 1 and w.desktop <= config.desktops.count) {
                 occupied[w.desktop - 1] = true;
             }
         }

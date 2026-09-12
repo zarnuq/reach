@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
     // ----------------------------------------------------------------------
     //
     // The scanner needs:
-    //   * the core Wayland protocol (wl_compositor, wl_shm, wl_seat, …), which it
+    //   * the core Wayland protocol (wl_compositor, wl_seat, …), which it
     //     finds in the system wayland-protocols data dir, and
     //   * our vendored river protocols in protocol/.
     const scanner = wayland.Scanner.create(b, .{});
@@ -64,15 +64,14 @@ pub fn build(b: *std.Build) void {
     // version. This includes the interfaces reach uses today and river's full
     // device-configuration surface for future config options.
     scanner.generate("wl_compositor", 4); // wl_surface / wl_region factory
-    scanner.generate("wl_subcompositor", 1); // wl_subsurface (border/bar pieces later)
-    scanner.generate("wl_shm", 1); // shared-memory buffers (borders + bar later)
+    scanner.generate("wl_subcompositor", 1); // wl_subsurface (border pieces)
     scanner.generate("wl_seat", 7); // referenced by river_seat_v1.wl_seat event
     scanner.generate("wl_output", 4); // referenced by river_output_v1.wl_output event
     scanner.generate("wp_viewporter", 1); // scale the 1x1 color buffer to border size
     scanner.generate("wp_single_pixel_buffer_manager_v1", 1); // solid-color buffers
     scanner.generate("river_window_manager_v1", 5); // THE protocol that drives us
     scanner.generate("river_xkb_bindings_v1", 3); // keybindings and chords
-    scanner.generate("river_layer_shell_v1", 1); // border/bar surfaces
+    scanner.generate("river_layer_shell_v1", 1); // border surfaces, panel default output
     scanner.generate("zwlr_output_manager_v1", 1); // output config (monitors table)
     scanner.generate("river_input_manager_v1", 2); // input config (keyboard repeat)
     scanner.generate("river_libinput_config_v1", 2); // libinput device settings
@@ -80,12 +79,6 @@ pub fn build(b: *std.Build) void {
 
     // Wrap the generated source as an importable module named "wayland".
     const wayland_mod = b.createModule(.{ .root_source_file = scanner.result });
-
-    // M4 bar dependencies (see build.zig.zon). pixman/fcft are `lazy` so we ask
-    // for them via lazyDependency; mvzr (the regex for status color escapes) is a
-    // normal dependency.
-    const pixman_mod = b.dependency("pixman", .{}).module("pixman");
-    const fcft_mod = b.dependency("fcft", .{}).module("fcft");
 
     // ----------------------------------------------------------------------
     // 2. The executable
@@ -100,8 +93,6 @@ pub fn build(b: *std.Build) void {
         // Modules importable from src/ via `@import("wayland")`.
         .imports = &.{
             .{ .name = "wayland", .module = wayland_mod },
-            .{ .name = "pixman", .module = pixman_mod },
-            .{ .name = "fcft", .module = fcft_mod },
         },
     });
 
@@ -114,10 +105,6 @@ pub fn build(b: *std.Build) void {
 
     // The actual C libraries behind the generated bindings.
     root_mod.linkSystemLibrary("wayland-client", .{});
-    // M4 bar: pixman (compositing) + fcft (font rasterization). Both are found
-    // via pkg-config inside the Nix dev shell.
-    root_mod.linkSystemLibrary("pixman-1", .{});
-    root_mod.linkSystemLibrary("fcft", .{});
     // xkbcommon: resolve xkb keysym NAMES from config.zon binds ("Return", "q",
     // "XF86AudioPlay", …) into keysym codes via xkb_keysym_from_name (binding.zig).
     root_mod.linkSystemLibrary("xkbcommon", .{});

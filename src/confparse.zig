@@ -76,7 +76,6 @@ pub const ActionSpec = union(enum) {
     zoom,
     togglefloating,
     togglefullscreen,
-    togglescratchpad,
     move: DeltaSpec,
     resize: DeltaSpec,
     focusstack: i32,
@@ -117,29 +116,6 @@ pub const CursorSpec = struct {
     shake: ?ShakeSpec = null,
 };
 
-/// nested `scratchpad` table.
-pub const ScratchpadSpec = struct {
-    app_id: ?[]const u8 = null,
-    command: ?[:0]const u8 = null,
-    w: ?f32 = null,
-    h: ?f32 = null,
-};
-
-/// nested `bar` table.
-pub const BarSpec = struct {
-    enabled: ?bool = null,
-    font: ?[:0]const u8 = null,
-    top: ?bool = null,
-    normal_fg: ?u32 = null,
-    normal_bg: ?u32 = null,
-    select_fg: ?u32 = null,
-    select_bg: ?u32 = null,
-    status_fg: ?u32 = null,
-    status_bg: ?u32 = null,
-    delim: ?[]const u8 = null,
-    blocks: ?[]const config.bar.Block = null,
-};
-
 /// The top-level config.zon document.
 pub const FileConfig = struct {
     outer_gap: ?i32 = null,
@@ -159,9 +135,7 @@ pub const FileConfig = struct {
     autostart: ?[]const [:0]const u8 = null,
     monitors: ?[]const config.Monitor = null,
     rules: ?[]const config.Rule = null,
-    scratchpad: ?ScratchpadSpec = null,
     cursor: ?CursorSpec = null,
-    bar: ?BarSpec = null,
     binds: ?[]const KeySpec = null,
 };
 
@@ -298,8 +272,6 @@ fn snapshotDefaults() void {
     if (defaults_taken) return;
     defaults_taken = true;
     defaults = mirror(FileConfig, config);
-    defaults.bar = mirror(BarSpec, config.bar);
-    defaults.scratchpad = mirror(ScratchpadSpec, config.scratchpad);
     defaults.cursor = mirror(CursorSpec, config.cursor);
     defaults.cursor.?.shake = mirror(ShakeSpec, config.cursor.shake);
     // `binds` is not a config.zig variable: null means "use the compiled-in
@@ -390,12 +362,6 @@ fn overlay(fc: FileConfig) void {
     if (fc.monitors) |v| config.monitors = v;
     if (fc.rules) |v| config.rules = v;
     if (fc.binds) |v| binds = v;
-    if (fc.scratchpad) |sp| {
-        if (sp.app_id) |v| config.scratchpad.app_id = v;
-        if (sp.command) |v| config.scratchpad.command = v;
-        if (sp.w) |v| config.scratchpad.w = v;
-        if (sp.h) |v| config.scratchpad.h = v;
-    }
     if (fc.cursor) |c| {
         if (c.theme) |v| config.cursor.theme = v;
         if (c.size) |v| config.cursor.size = v;
@@ -405,18 +371,5 @@ fn overlay(fc: FileConfig) void {
             if (s.delay) |v| config.cursor.shake.delay = v;
             if (s.command) |v| config.cursor.shake.command = v;
         }
-    }
-    if (fc.bar) |b| {
-        if (b.enabled) |v| config.bar.enabled = v;
-        if (b.font) |v| config.bar.font = v;
-        if (b.top) |v| config.bar.top = v;
-        if (b.normal_fg) |v| config.bar.normal_fg = v;
-        if (b.normal_bg) |v| config.bar.normal_bg = v;
-        if (b.select_fg) |v| config.bar.select_fg = v;
-        if (b.select_bg) |v| config.bar.select_bg = v;
-        if (b.status_fg) |v| config.bar.status_fg = v;
-        if (b.status_bg) |v| config.bar.status_bg = v;
-        if (b.delim) |v| config.bar.delim = v;
-        if (b.blocks) |v| config.bar.blocks = v;
     }
 }

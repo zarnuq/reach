@@ -24,7 +24,7 @@ const BorderSurface = @import("border.zig").BorderSurface;
 /// Every global reach binds from the registry, gathered in one place (see
 /// main.zig's registryListener). `rwm` is the only hard requirement; the rest are
 /// optional because a minimal compositor could lack them (and we degrade: no
-/// wl_shm → no bar, no viewporter/single-pixel-buffer → no borders, etc.).
+/// no viewporter/single-pixel-buffer → no borders, etc.).
 /// Passed as a single value into `init`, replacing what used to be a dozen
 /// positional parameters threaded through wm.init → Context.init.
 pub const Globals = struct {
@@ -33,7 +33,6 @@ pub const Globals = struct {
     layer_shell: ?*river.LayerShellV1 = null,
     wl_compositor: ?*wl.Compositor = null,
     wl_subcompositor: ?*wl.Subcompositor = null,
-    wl_shm: ?*wl.Shm = null,
     wp_viewporter: ?*wp.Viewporter = null,
     wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
     // Sibling protocols applied once at startup (outputconfig/inputconfig) and not
@@ -51,14 +50,13 @@ pub const Context = struct {
     registry: *wl.Registry,
 
     // river + core globals (bound in main.zig). `rwm` is required; the optionals
-    // gate optional subsystems (bar, borders) and a minimal compositor could lack
+    // gate optional subsystems (borders) and a minimal compositor could lack
     // them. Copied from the `Globals` passed to init.
     rwm: *river.WindowManagerV1,
     xkb_bindings: ?*river.XkbBindingsV1,
     layer_shell: ?*river.LayerShellV1,
     wl_compositor: ?*wl.Compositor,
     wl_subcompositor: ?*wl.Subcompositor,
-    wl_shm: ?*wl.Shm,
     wp_viewporter: ?*wp.Viewporter,
     wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1,
 
@@ -119,7 +117,6 @@ pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, g: Globals) void {
         .layer_shell = g.layer_shell,
         .wl_compositor = g.wl_compositor,
         .wl_subcompositor = g.wl_subcompositor,
-        .wl_shm = g.wl_shm,
         .wp_viewporter = g.wp_viewporter,
         .wp_single_pixel_buffer_manager = g.wp_single_pixel_buffer_manager,
         .windows = .empty,
