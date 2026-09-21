@@ -37,6 +37,8 @@ plus an optional `config.zon` file (see [Configuration](#configuration)).
 - **Input configuration** — keyboard repeat rate/delay via river-input-management.
 - **Autostart**, **cursor warp**, **focus-follows-mouse** (sloppy focus), and
   **session env** (`setenv` before autostart).
+- **Cursor theme/size** — set on the seat and exported to spawned children — and
+  **shake to find**: scrub the mouse and a command of your choosing runs.
 - **Live config reload** — `SIGHUP` or a keybind re-reads `config.zon` and rebuilds
   keybinds, colors, rules and monitors in place; a config that doesn't parse is
   rejected without disturbing the running session.
@@ -48,9 +50,12 @@ Not implemented (optional): interactive mouse move/resize/float by `MOD`+drag
 
 [Gentoo overlay](https://github.com/zarnuq/gentoo-overlay)
 
-Requires **Zig 0.16** and the system `wayland-client`, `pixman`, and `fcft`
-libraries. The first build fetches `zig-wayland`, `zig-pixman`, and `zig-fcft`
-from the network and caches them.
+Requires **Zig 0.16** and the system `wayland-client` and `xkbcommon` libraries.
+At build time it also needs `wayland-scanner` and the `wayland-protocols` XML
+data dir, from which the scanner reads `viewporter` and `single-pixel-buffer-v1`
+(together those draw the solid-color border rectangles with no shm at all). The
+first build fetches `zig-wayland` from the network and caches it; after that no
+network is needed.
 
 The vendored protocol definitions track river 0.4.8: window management v5, XKB
 bindings v3, and input management v2. Bindings for river's libinput-config v2
@@ -61,11 +66,15 @@ management v3 and XKB bindings v2.
 
 ```sh
 zig build                 # → zig-out/bin/reach
+zig build run             # build and run (e.g. inside a nested river session)
 zig build test            # run unit tests
 ```
 
-Build with **plain `zig build`**: reach links the *system* `wayland`/`pixman`/
-`fcft`, matching how river itself is built.
+Build with **plain `zig build`**: reach links the *system* `wayland-client` and
+`xkbcommon`, matching how river itself is built. If your Zig comes from Nix,
+build inside `nix develop` ([`flake.nix`](flake.nix)) instead — a Nix toolchain
+linking the host distro's libwayland mixes two glibc worlds and segfaults on
+connect.
 
 ## Run
 
@@ -103,8 +112,8 @@ reproduces the defaults, so it is a working starting point.
 
 Configurable: gaps, sloppy focus, keyboard repeat, session env, autostart,
 monitors (mode/position/transform/scale, matched by connector name), window rules,
-master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width, and
-the full keymap.
+master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width,
+cursor theme/size and shake-to-find, and the full keymap.
 
 ### Live reload
 
@@ -115,9 +124,18 @@ kill -HUP $(pidof reach)     # or press Super+Shift+r
 ```
 
 Reload rebuilds everything the file drives: colors, gaps, `nmaster`/`mfact`,
-borders, window rules, the keymap (including chords), and monitor configuration. A malformed file is reported with a line/column error
-and **is not applied at all** — the session keeps running on the config it already
-had, so a bad edit costs you a log line rather than your keybindings.
+borders, window rules, the keymap (including chords), cursor theme/size and
+shake-to-find, and monitor configuration. A malformed file is reported with a
+line/column error and **is not applied at all** — the session keeps running on
+the config it already had, so a bad edit costs you a log line rather than your
+keybindings.
+
+Two of those are re-applied only when they actually changed, because redoing
+them is not free: the `monitors` table (re-setting a mode is a visible flicker)
+and the `cursor` block (which reopens the `/dev/input` handles behind
+shake-to-find). Everything else — colors, gaps, `mfact`/`nmaster`, border
+thickness, window rules — needs no action at all, since the manage/render cycle
+the reload runs inside reads each one fresh.
 
 Two settings are startup-only, because they cannot be anything else:
 
@@ -177,12 +195,18 @@ into — which is also why an empty view is unreachable.
 | `MOD+Return` | zoom (promote to master) |
 | `MOD+f` | toggle floating |
 | `MOD+Shift+f` | toggle fullscreen |
-| `MOD+arrows` | move floating window |
-| `MOD+Shift+arrows` | grow/shrink floating window |
 | `MOD+,` / `MOD+.` | focus previous / next monitor |
 | `MOD+Shift+,` / `MOD+Shift+.` | send window to previous / next monitor |
+| `MOD+Shift+Return` | spawn `$TERMINAL` (falling back to `foot`) |
+| `MOD+Shift+r` | reload `config.zon` |
 | `MOD+Shift+q` | kill focused client |
 | `MOD+Shift+p` | quit reach (and the river session) |
+
+That table *is* the compiled-in keymap — the one you get with no `config.zon`,
+or with one that sets no `binds`. Keyboard move/resize of a floating window has
+no default bind; [`config.example.zon`](config.example.zon) puts it on
+`MOD+arrows` / `MOD+Shift+arrows` (step `float_step`), which is the convention
+the rest of this README assumes.
 
 **Spawn & chords.** Launcher bindings and multi-key chords are user-defined in
 `config.zon`. A bind maps a keysym + modifiers to an action; a *chord* leader arms
@@ -196,13 +220,64 @@ to arbitrary depth. The available actions are:
 - `move` / `resize` — keyboard move/resize of a floating window
 - `focusstack`, `setmfact`, `incnmaster`
 - `focusmon`, `sendmon`
+- `reload` — re-read `config.zon` (the same thing `SIGHUP` does)
+
+### Cursor and shake to find
+
+river renders the cursor, but the window manager picks its theme and size
+(`river_seat_v1.set_xcursor_theme`). reach also exports `XCURSOR_THEME` /
+`XCURSOR_SIZE` to the processes it spawns: without them libXcursor derives a size
+from the Xwayland root's height, which across a multi-monitor layout gives X11
+windows a wildly oversized pointer.
+
+```zon
+.cursor = .{
+    .theme = "default",      // under ~/.local/share/icons or /usr/share/icons
+    .size = 24,              // px; also the exported XCURSOR_SIZE
+    .export_env = true,      // export the two vars to spawned children
+    .shake = .{
+        .enabled = false,
+        .delay = 150,        // ms the motion must keep qualifying
+        .command = "",       // empty = do nothing
+    },
+},
+```
+
+`theme = "default"` follows that theme's `Inherits` chain, i.e. whatever
+dconf/nwg-look already set. `export_env` only affects what *reach* starts —
+shells that predate the session keep their old environment.
+
+**Shake to find** recognises a scrub of the mouse and runs `cursor.shake.command`
+— once per shake, re-arming only after the motion stops. The detector is
+Hyprland's: over a trailing window of motion, compare the distance travelled
+against the diagonal of the box the pointer stayed inside, so a shake piles up
+travel in a small box while a straight swipe never fires. `delay` is then the
+whole tuning surface — that test answers "is this shaking *right now*", and
+requiring it to hold for `delay` is what separates a real shake from an ordinary
+overshoot-and-correct, which only looks like one for a moment. Lower is
+twitchier; `0` fires the instant the motion qualifies.
+
+Detection reads raw deltas from `/dev/input/event*` rather than from the
+protocol, because `river_seat_v1.pointer_position` only arrives inside a manage
+sequence and motion alone may not start one — shaking inside a single window
+would yield almost no samples. That needs no elevation (the devices are
+`root:input` 0660), but **the user must be in the `input` group**; with no
+readable pointer device reach logs a warning and carries on. While
+`enabled = false` — the default — `/dev/input` is never opened at all.
+
+reach cannot *draw* anything at the cursor itself. It is river's
+window-management client rather than the compositor, so it has no surface to
+paint on, and those deltas are the only pointer information it has — it never
+learns where the pointer actually is. So the gesture is recognised here and
+handed to whatever can map a surface.
 
 ## State socket
 
 reach draws no bar. Everything a panel would need to draw one — which desktop each
 output is viewing, which desktops hold windows, which output is focused, and the
 focused window's title and `app_id` — is published on a `SOCK_STREAM` unix socket
-at `$XDG_RUNTIME_DIR/reach.sock`:
+at `$XDG_RUNTIME_DIR/reach.sock` (falling back to `/tmp/reach.sock` when that
+variable is unset):
 
 ```json
 {"desktops":9,"outputs":[{"name":"DP-2","desktop":1,"focused":true,"fullscreen":false,"occupied":[1,3],"title":"nvim","appId":"kitty"}]}
@@ -212,7 +287,12 @@ One line per change, and each line is a **complete** snapshot rather than a delt
 a client that connects late or reconnects is immediately correct, with no resync
 step and no ordering to get wrong. The first line arrives on connect. Publishing
 is driven from the render cycle, so a panel is as live as the windows are, and
-composing is skipped entirely when nothing is connected.
+composing is skipped entirely when nothing is connected. Up to four clients may
+be connected at once — a bar per session is the case, and the ceiling is what
+stops a client stuck in a reconnect loop from exhausting reach's fds. Titles and
+`app_id`s are truncated at 256 bytes. If the socket cannot be bound, reach logs
+it and carries on: an external bar failing to start is not a reason to lose the
+session.
 
 The socket is **write-only**: client fds are read only to notice a disconnect, and
 anything sent to reach is discarded. A `view <n>` command for clickable desktop

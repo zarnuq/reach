@@ -41,6 +41,44 @@
     .border_inactive = 0x45475a,
     .border_thickness = 2,
 
+    // --- cursor ------------------------------------------------------------
+    // river RENDERS the cursor; the WM picks its theme and size. reach also
+    // exports XCURSOR_THEME/XCURSOR_SIZE to what it spawns (export_env) —
+    // without them libXcursor sizes from the Xwayland root height, giving X11
+    // windows an enormous pointer on a multi-monitor layout. theme "default"
+    // follows that theme's Inherits chain (whatever dconf/nwg-look set).
+    .cursor = .{
+        .theme = "default",
+        .size = 24,
+        .export_env = true,
+
+        // Shake to find: scrub the mouse and `command` runs, once per shake.
+        // Detection reads raw deltas from /dev/input/event* (needs the user in
+        // the `input` group); while enabled = false, /dev/input is never opened.
+        // `delay` is the ms the motion must KEEP qualifying as a shake — the one
+        // knob for how easy it is to set off, and what separates a real shake
+        // from an overshoot-and-correct. Lower = twitchier, 0 = instant.
+        // reach cannot draw at the cursor (it has no surface, and never learns
+        // where the pointer is), so the gesture is handed to whatever can.
+        .shake = .{
+            .enabled = false,
+            .delay = 150,
+            .command = "",
+        },
+    },
+
+    // --- gamma (dimming + colour temperature) ------------------------------
+    // Applied to every output at once through wlr-gamma-control, held by reach
+    // for as long as the session lasts (gamma.zig).
+    //
+    // Temperature is config-only: 6500 is neutral (the screen untouched), lower
+    // is warmer, and a reload is what switches it — that is the whole night
+    // light. Brightness has no entry here on purpose; it is runtime state, bound
+    // to a key below, so an edit to this file can never undo where you set it.
+    .gamma = .{
+        .temperature = 6500,
+    },
+
     // --- session environment (dwl setupenv) --------------------------------
     // Applied with setenv() before autostart; NOT through a shell, so $VARS are
     // NOT expanded here — use absolute paths. Never set WAYLAND_DISPLAY.
@@ -139,21 +177,25 @@
             .{ .key = "2", .action = .{ .spawn = "easyeffects -l None" } },
         } },
 
-        // media / volume / mic
+        // media / volume / mic. These used to append `kill -35 $(pidof reach)`
+        // to poke the built-in bar's status blocks; that bar is gone and reach
+        // handles only SIGHUP now, so the signal was a no-op. An external bar
+        // should follow pactl/wpctl itself, or watch the state socket.
         .{ .key = "XF86AudioPlay", .action = .{ .spawn = "playerctl -p mpd play-pause" } },
         .{ .key = "XF86AudioPrev", .action = .{ .spawn = "playerctl -p mpd previous" } },
         .{ .key = "XF86AudioNext", .action = .{ .spawn = "playerctl -p mpd next" } },
-        .{ .key = "Alt+Up", .action = .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ +5% && kill -35 $(pidof reach)" } },
-        .{ .key = "Alt+Down", .action = .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ -5% && kill -35 $(pidof reach)" } },
-        .{ .key = "Alt+Left", .action = .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ -5% && kill -36 $(pidof reach)" } },
-        .{ .key = "Alt+Right", .action = .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ +5% && kill -36 $(pidof reach)" } },
-        .{ .key = "Alt+End", .action = .{ .spawn = "pactl set-source-mute @DEFAULT_SOURCE@ toggle && kill -36 $(pidof reach)" } },
-        .{ .key = "Alt+bracketleft", .action = .{ .spawn = "$HOME/.local/bin/flip.sh && touch /tmp/update_audio && kill -35 $(pidof reach)" } },
+        .{ .key = "Alt+Up", .action = .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ +5%" } },
+        .{ .key = "Alt+Down", .action = .{ .spawn = "pactl set-sink-volume @DEFAULT_SINK@ -5%" } },
+        .{ .key = "Alt+Left", .action = .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ -5%" } },
+        .{ .key = "Alt+Right", .action = .{ .spawn = "pactl set-source-volume @DEFAULT_SOURCE@ +5%" } },
+        .{ .key = "Alt+End", .action = .{ .spawn = "pactl set-source-mute @DEFAULT_SOURCE@ toggle" } },
+        .{ .key = "Alt+bracketleft", .action = .{ .spawn = "$HOME/.local/bin/flip.sh && touch /tmp/update_audio" } },
 
-        // brightness / redshift
-        .{ .key = "Super+Alt+Left", .action = .{ .spawn = "$HOME/.local/bin/brightness.sh down" } },
-        .{ .key = "Super+Alt+Right", .action = .{ .spawn = "$HOME/.local/bin/brightness.sh up" } },
-        .{ .key = "Super+Alt+Up", .action = .{ .spawn = "$HOME/.local/bin/redshift.sh" } },
+        // brightness — a signed percent step applied to every output. In-process:
+        // no script, no daemon, no bus round trip. Floors at 10% so a key can
+        // never black the screen out. (Colour temperature is `.gamma` above.)
+        .{ .key = "Super+Alt+Left", .action = .{ .brightness = -5 } },
+        .{ .key = "Super+Alt+Right", .action = .{ .brightness = 5 } },
 
         // window management
         .{ .key = "Super+Shift+r", .action = .reload },

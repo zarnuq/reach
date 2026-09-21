@@ -14,6 +14,7 @@ const river = wayland.client.river;
 
 const Context = @import("context.zig");
 const config = @import("config.zig");
+const gamma = @import("gamma.zig");
 
 /// An output-local rectangle.
 pub const Rect = struct { x: i32 = 0, y: i32 = 0, width: i32 = 0, height: i32 = 0 };
@@ -146,6 +147,10 @@ pub const Output = struct {
                 // windows in a sliver of the new one.
                 self.usable_hint = null;
                 log.info("output geometry: {d}x{d} @ ({d},{d})", .{ self.width, self.height, self.x, self.y });
+                // A mode set can land on the output after we wrote its ramp, so
+                // re-assert it rather than trusting the ramp to survive the
+                // commit. A no-op before the gamma size has arrived.
+                gamma.reapply();
             },
             .capture_sessions => |ev| self.capture_sessions = ev.count,
             // The numeric name of the wl_output global backing this output. Bind
@@ -159,6 +164,10 @@ pub const Output = struct {
                 };
                 self.wl_output = wo;
                 wo.setListener(*Output, wlOutputListener, self);
+                // Gamma is per wl_output, so this is the earliest we can claim
+                // it — and it has to happen on hotplug too, since a ramp is not
+                // remembered across an output coming back.
+                gamma.attach(wo);
             },
             // The monitor went away. Move its windows to a surviving output (so
             // they stay visible), drop ourselves from the list, and release the
@@ -191,7 +200,10 @@ pub const Output = struct {
                 // (the protocol leaves the default undefined once ours is gone).
                 if (ctx.layer_default == self) ctx.layer_default = null;
                 if (self.layer_output) |lo| lo.destroy();
-                if (self.wl_output) |wo| wo.destroy();
+                if (self.wl_output) |wo| {
+                    gamma.detach(wo);
+                    wo.destroy();
+                }
                 if (self.name) |n| ctx.gpa.free(n);
                 self.rwm.destroy();
                 ctx.gpa.destroy(self);

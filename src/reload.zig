@@ -34,6 +34,7 @@ const config = @import("config.zig");
 const confparse = @import("confparse.zig");
 const Context = @import("context.zig");
 const binding = @import("binding.zig");
+const gamma = @import("gamma.zig");
 const outputconfig = @import("outputconfig.zig");
 const shake = @import("shake.zig");
 
@@ -65,6 +66,7 @@ pub fn apply() void {
     // arena, so every comparison against them has to happen before `release`.
     const old_cursor = cursorSettings();
     const old_monitors = config.monitors;
+    const old_temperature = config.gamma.temperature;
 
     // Tear the bindings down while their `spawn` strings are still valid memory,
     // then swap the config in.
@@ -88,6 +90,12 @@ pub fn apply() void {
 
     // Monitors: cheap to skip, and re-applying a mode set is a visible flicker.
     if (monitors_changed) outputconfig.reapply();
+
+    // Temperature is config-only, so a reload is the ONLY way it moves — this is
+    // the night-light switch. Brightness is left alone on purpose: it is runtime
+    // state owned by the keybinds, and a reload that reset it would undo every
+    // adjustment made since the session started.
+    if (config.gamma.temperature != old_temperature) gamma.reapply();
 
     // `env` and `autostart` are deliberately one-shot: the variables were exported
     // into a process tree that already exists, and the programs have already run.

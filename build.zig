@@ -51,6 +51,11 @@ pub fn build(b: *std.Build) void {
     // goes through this standard wlroots protocol, which river implements. reach
     // binds it to apply the config.monitors table at startup (dwl monrules).
     scanner.addCustomProtocol(b.path("protocol/wlr-output-management-unstable-v1.xml"));
+    // wlr-gamma-control: dimming and colour temperature. Also not part of
+    // river-window-management, and held rather than set — the control object has
+    // to stay alive for as long as the adjustment does, which is what makes the
+    // window manager the right owner (gamma.zig).
+    scanner.addCustomProtocol(b.path("protocol/wlr-gamma-control-unstable-v1.xml"));
     // river-input-management: like outputs, input config (keyboard repeat, …) is
     // NOT part of river-window-management — it goes through this sibling river
     // protocol. reach binds it to apply config.repeat_rate/repeat_delay.
@@ -73,6 +78,7 @@ pub fn build(b: *std.Build) void {
     scanner.generate("river_xkb_bindings_v1", 3); // keybindings and chords
     scanner.generate("river_layer_shell_v1", 1); // border surfaces, panel default output
     scanner.generate("zwlr_output_manager_v1", 1); // output config (monitors table)
+    scanner.generate("zwlr_gamma_control_manager_v1", 1); // dimming + colour temperature
     scanner.generate("river_input_manager_v1", 2); // input config (keyboard repeat)
     scanner.generate("river_libinput_config_v1", 2); // libinput device settings
     scanner.generate("river_xkb_config_v1", 2); // keymaps/layout/lock state

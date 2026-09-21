@@ -39,6 +39,7 @@ pub const Globals = struct {
     // needed afterwards, so they live here but aren't copied onto the Context.
     output_manager: ?*zwlr.OutputManagerV1 = null,
     input_manager: ?*river.InputManagerV1 = null,
+    gamma_manager: ?*zwlr.GammaControlManagerV1 = null,
 };
 
 pub const Context = struct {

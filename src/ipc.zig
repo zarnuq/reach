@@ -33,6 +33,7 @@ const log = std.log.scoped(.ipc);
 
 const config = @import("config.zig");
 const Context = @import("context.zig");
+const gamma = @import("gamma.zig");
 const query = @import("query.zig");
 
 // libc socket calls. Zig 0.16's std.posix no longer wraps the socket API, and we
@@ -208,7 +209,15 @@ fn compose() bool {
     const selected = query.selectedOutput();
     var out = Writer{ .buf = &scratch };
 
-    out.print("{{\"desktops\":{d},\"outputs\":[", .{config.desktops.count});
+    // Brightness rides the same snapshot as everything else: it changes inside a
+    // keybind, and river guarantees a manage cycle after one, so a panel learns
+    // about a dim in the same beat it would learn about a focus change. This is
+    // what replaced a panel tailing the gamma daemon's bus in a subprocess.
+    out.print("{{\"desktops\":{d},\"brightness\":{d},\"temperature\":{d},\"outputs\":[", .{
+        config.desktops.count,
+        gamma.brightness(),
+        config.gamma.temperature,
+    });
     for (ctx.outputs.items, 0..) |o, i| {
         if (i != 0) out.raw(",");
         out.raw("{\"name\":");

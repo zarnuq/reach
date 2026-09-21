@@ -39,6 +39,7 @@ const ipc = @import("ipc.zig");
 const shake = @import("shake.zig");
 const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
+const gamma = @import("gamma.zig");
 
 // Oldest protocol versions compatible with the requests reach makes today.
 // Newer servers are capped to the generated version in registryListener.
@@ -59,6 +60,7 @@ const RegistryGlobals = struct {
     layer_shell: ?*river.LayerShellV1 = null,
     output_manager: ?*zwlr.OutputManagerV1 = null,
     input_manager: ?*river.InputManagerV1 = null,
+    gamma_manager: ?*zwlr.GammaControlManagerV1 = null,
 };
 
 extern fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
@@ -161,6 +163,15 @@ pub fn main() !void {
         log.warn("no zwlr_output_manager_v1 — monitor config disabled", .{});
     }
 
+    // Gamma: dimming and colour temperature. Registered before the event loop so
+    // that every output river announces can be claimed as it arrives; the ramps
+    // themselves are written once each output reports its gamma size.
+    if (globals.gamma_manager) |gm| {
+        gamma.init(gm);
+    } else {
+        log.warn("no zwlr_gamma_control_manager_v1 — brightness/temperature disabled", .{});
+    }
+
     // Input configuration (keyboard repeat). Applied as devices are announced.
     if (globals.input_manager) |im| {
         inputconfig.init(im);
@@ -217,6 +228,8 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
                 globals.layer_shell = registry.bind(g.name, river.LayerShellV1, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, zwlr.OutputManagerV1.interface.name) == .eq) {
                 globals.output_manager = registry.bind(g.name, zwlr.OutputManagerV1, 1) catch return;
+            } else if (std.mem.orderZ(u8, g.interface, zwlr.GammaControlManagerV1.interface.name) == .eq) {
+                globals.gamma_manager = registry.bind(g.name, zwlr.GammaControlManagerV1, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, river.InputManagerV1.interface.name) == .eq) {
                 globals.input_manager = registry.bind(
                     g.name,
@@ -240,4 +253,5 @@ test {
     _ = @import("action.zig");
     _ = @import("binding.zig");
     _ = @import("confparse.zig");
+    _ = @import("gamma.zig");
 }

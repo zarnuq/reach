@@ -229,6 +229,23 @@ pub var border_inactive: u32 = 0x45475a;
 pub var border_thickness: i32 = 2;
 
 // ---------------------------------------------------------------------------
+// Gamma (dimming + colour temperature)
+// ---------------------------------------------------------------------------
+
+/// Applied to every output through wlr-gamma-control (gamma.zig).
+pub const gamma = struct {
+    /// Colour temperature in Kelvin. 6500 is neutral — an identity ramp, i.e.
+    /// the screen untouched — and lower is warmer (4000 is a typical night
+    /// light). Ramps are normalised against 6500 so neutral really is neutral.
+    ///
+    /// CONFIG-ONLY, with no action and no IPC behind it: editing config.zon and
+    /// reloading is the entire night-light interface. Brightness is the opposite
+    /// — runtime state with a keybind and nothing in the file — because that is
+    /// the one you reach for without thinking. See gamma.zig's header.
+    pub var temperature: u32 = 6500;
+};
+
+// ---------------------------------------------------------------------------
 // Virtual desktops
 // ---------------------------------------------------------------------------
 //

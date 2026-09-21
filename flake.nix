@@ -39,15 +39,7 @@
           wayland-protocols # core + stable/staging protocol XML
           pkg-config
 
-          libxkbcommon # keysym constants for keybindings (wired up in M5)
-
-          # M4 bar: software rendering + font stack. zig-pixman / zig-fcft link
-          # `pixman-1` and `fcft` via pkg-config; fcft pulls in freetype/fontconfig
-          # at runtime to find and rasterize "JetBrainsMono Nerd Font".
-          pixman
-          fcft
-          freetype
-          fontconfig
+          libxkbcommon # xkb_keysym_from_name, for config.zon bind names
 
           river # the compositor — for `river -c ./zig-out/bin/reach` testing
         ];

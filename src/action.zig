@@ -26,6 +26,7 @@ const std = @import("std");
 
 const config = @import("config.zig");
 const confparse = @import("confparse.zig");
+const gamma = @import("gamma.zig");
 const reload = @import("reload.zig");
 const Context = @import("context.zig");
 const Output = @import("output.zig").Output;
@@ -58,6 +59,9 @@ pub const Action = union(enum) {
     incnmaster: i32,
     focusmon: i32,
     sendmon: i32,
+    // Screen brightness, as a signed percentage step applied to every output at
+    // once (gamma.zig). Clamped to a floor so a bind can't black the screen out.
+    brightness: i32,
     // Re-read config.zon and rebuild everything it drives (reload.zig). Deferred
     // to the next manage cycle — running it here would free this very Binding
     // while its listener is still on the stack.
@@ -83,6 +87,7 @@ pub fn toAction(a: confparse.ActionSpec) Action {
         .incnmaster => |v| .{ .incnmaster = v },
         .focusmon => |v| .{ .focusmon = v },
         .sendmon => |v| .{ .sendmon = v },
+        .brightness => |v| .{ .brightness = v },
         .reload => .reload,
     };
 }
@@ -97,6 +102,9 @@ test "config action conversion preserves payloads" {
 
     const mfact = toAction(.{ .setmfact = 0.05 });
     try std.testing.expectEqual(@as(f32, 0.05), mfact.setmfact);
+
+    const dim = toAction(.{ .brightness = -5 });
+    try std.testing.expectEqual(@as(i32, -5), dim.brightness);
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +139,8 @@ pub fn execute(action: Action) void {
         },
         // Spawn a shell command (double-fork; see spawn()).
         .spawn => |cmd| spawn(cmd),
+        // Dim/undim every output. In-process: no subprocess, no bus round trip.
+        .brightness => |d| gamma.step(d),
         // Re-read config.zon. Only *requests* the reload; reload.apply() runs it
         // from the manage cycle that river guarantees follows this press, by
         // which point this Binding is no longer on the stack and can be freed.

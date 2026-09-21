@@ -83,6 +83,7 @@ pub const ActionSpec = union(enum) {
     incnmaster: i32,
     focusmon: i32,
     sendmon: i32,
+    brightness: i32,
     reload,
 };
 
@@ -106,6 +107,11 @@ pub const ShakeSpec = struct {
     enabled: ?bool = null,
     delay: ?u32 = null,
     command: ?[:0]const u8 = null,
+};
+
+/// nested `gamma` table.
+pub const GammaSpec = struct {
+    temperature: ?u32 = null,
 };
 
 /// nested `cursor` table.
@@ -136,6 +142,7 @@ pub const FileConfig = struct {
     monitors: ?[]const config.Monitor = null,
     rules: ?[]const config.Rule = null,
     cursor: ?CursorSpec = null,
+    gamma: ?GammaSpec = null,
     binds: ?[]const KeySpec = null,
 };
 
@@ -274,6 +281,7 @@ fn snapshotDefaults() void {
     defaults = mirror(FileConfig, config);
     defaults.cursor = mirror(CursorSpec, config.cursor);
     defaults.cursor.?.shake = mirror(ShakeSpec, config.cursor.shake);
+    defaults.gamma = mirror(GammaSpec, config.gamma);
     // `binds` is not a config.zig variable: null means "use the compiled-in
     // keymap", which is exactly the right reset value.
     defaults.binds = null;
@@ -371,5 +379,8 @@ fn overlay(fc: FileConfig) void {
             if (s.delay) |v| config.cursor.shake.delay = v;
             if (s.command) |v| config.cursor.shake.command = v;
         }
+    }
+    if (fc.gamma) |g| {
+        if (g.temperature) |v| config.gamma.temperature = v;
     }
 }
