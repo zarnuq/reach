@@ -52,6 +52,11 @@ const min_brightness = 10;
 /// config asking for 6500 K gets an identity table rather than a faint cast.
 const neutral_kelvin = 6500.0;
 
+/// Display transfer exponent. The ramp holds ENCODED values, so a multiplier
+/// worked out in linear light cannot be applied to one directly — see
+/// `whitepoint`.
+const display_gamma = 2.2;
+
 var manager: ?*zwlr.GammaControlManagerV1 = null;
 
 /// Runtime brightness in percent. Starts at full; the `brightness` action steps
@@ -217,13 +222,25 @@ fn fillRamp(out: []u16, size: usize, w: [3]f64, bright: f64) void {
 // ---------------------------------------------------------------------------
 
 /// Per-channel multipliers for a colour temperature, normalised so that
-/// `neutral_kelvin` is exactly (1, 1, 1).
+/// `neutral_kelvin` is exactly (1, 1, 1), and ENCODED for the ramp.
 ///
-/// The normalisation is the point. Taken raw, the Planckian locus at 6500 K is
-/// near but not equal to the sRGB white point, so "neutral" would carry a
-/// permanent faint tint. Dividing by the 6500 K result makes every temperature a
-/// relative shift away from an untouched screen, and rescaling so the brightest
-/// channel is 1.0 keeps the warm end from clipping.
+/// Two steps, and the second is the one that is easy to miss.
+///
+/// Normalising: taken raw, the Planckian locus at 6500 K is near but not equal
+/// to the sRGB white point, so "neutral" would carry a permanent faint tint.
+/// Dividing by the 6500 K result makes every temperature a relative shift away
+/// from an untouched screen, and rescaling so the brightest channel is 1.0 keeps
+/// the warm end from clipping.
+///
+/// Encoding: `planckianRgb` works in LINEAR light, but a gamma ramp maps encoded
+/// values to encoded values. Attenuating an encoded `v` by a linear factor `f`
+/// means encode(f · decode(v)) = (f · v^γ)^(1/γ) = f^(1/γ) · v — so the factor
+/// that may be multiplied into the table is `f^(1/γ)`, not `f`. Applied raw, a
+/// linear 0.38 blue lands as an effective 0.38^2.2 ≈ 0.11: the screen comes out
+/// far redder AND much darker than the temperature asked for, since green (most
+/// of perceived luminance) is over-attenuated the same way. Encoding first puts
+/// 4000 K at ≈(1.000, 0.846, 0.644), which is redshift's own table to within a
+/// few percent — the table wl-gammarelay-rs ships and this session was used to.
 fn whitepoint(kelvin: u32) [3]f64 {
     const raw = planckianRgb(@floatFromInt(kelvin));
     const ref = planckianRgb(neutral_kelvin);
@@ -234,9 +251,10 @@ fn whitepoint(kelvin: u32) [3]f64 {
         c[i] = if (ref[i] > 0) raw[i] / ref[i] else 1.0;
         max = @max(max, c[i]);
     }
-    if (max > 0) for (0..3) |i| {
-        c[i] /= max;
-    };
+    for (0..3) |i| {
+        if (max > 0) c[i] /= max;
+        c[i] = std.math.pow(f64, c[i], 1.0 / display_gamma);
+    }
     return c;
 }
 
@@ -289,6 +307,16 @@ test "warmer than neutral keeps red and drops blue" {
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), w[0], 1e-9); // red is the max
     try std.testing.expect(w[1] < 1.0);
     try std.testing.expect(w[2] < w[1]); // blue falls fastest
+}
+
+test "the whitepoint is encoded, not linear light" {
+    // Pinned against redshift's blackbody table (~1.000/0.815/0.619 at 4000 K),
+    // which is what wl-gammarelay-rs and every other night light applies. Without
+    // the gamma encoding this comes out at 0.692/0.380 — visibly red and dark,
+    // which is exactly how the regression showed up.
+    const w = whitepoint(4000);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.846), w[1], 0.04);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.644), w[2], 0.04);
 }
 
 test "a neutral full-brightness ramp is the identity table" {
