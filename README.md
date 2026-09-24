@@ -123,41 +123,43 @@ the hardware in front of you rather than a preference: it changes when you dock,
 it is the only part worth letting a GUI rewrite, and one machine's copy is
 meaningless on another.
 
-Its schema is a list of **named presets** plus the one that is `active`, so a
-docked laptop, that same laptop alone, and a desktop are three entries in one
-file instead of three commented-out blocks:
+One file, one layout — the same table a `.monitors` block in `config.zon` holds,
+so a layout moves between the two by cut and paste:
 
 ```zig
 .{
-    .active = "docked",
-    .presets = .{
-        .{
-            .name = "docked",
-            .monitors = .{
-                .{ .name = "DP-5",  .w = 1920, .h = 1080, .x = 0, .y = 0 },
-                .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 1080 },
-            },
-        },
-        .{
-            .name = "mobile",
-            .monitors = .{
-                .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 0 },
-            },
-        },
+    .monitors = .{
+        .{ .name = "DP-5",  .w = 1920, .h = 1080, .x = 0, .y = 0 },
+        .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 1080 },
     },
 }
 ```
 
-Switching layouts is then a one-field edit plus a reload. Nothing else is
-needed to make that work: reload already diffs the monitor table by value and
-re-applies only on a real change, so `.active = "mobile"` + `Super+Shift+r` is
-the whole docking gesture, and a reload that changes nothing else costs no
-flicker.
+**Keeping several layouts is a job for the filesystem.** Keep a file per
+arrangement and make `monitors.zon` a symlink to the one in use:
 
-With no `active`, a file holding exactly one preset uses it. A name that matches
-nothing leaves the layout alone and logs — guessing between layouts is how a
-screen ends up rotated at login. A `.monitors` block in `config.zon` still works
-exactly as before; `monitors.zon` simply wins where both exist.
+```
+~/.config/reach/
+├── config.zon
+├── monitors.zon -> monitors/docked.zon
+└── monitors/
+    ├── docked.zon
+    ├── laptop.zon
+    └── desktop.zon
+```
+
+Re-pointing the link and reloading is then the whole docking gesture. reach knows
+nothing about that arrangement, and that is the point: it opens `monitors.zon`,
+the kernel follows the link, and the layout is re-applied only when it actually
+changed by value — so a reload that switches nothing costs no flicker, and a
+**dangling link reads as no file at all**. There is no preset list, no `active`
+field and no name matching to model: whichever file the link names IS the layout,
+and whatever it lists IS the monitor table, empty included. Anything cleverer
+belongs in whatever writes the files, which is better placed to decide what a
+sensible layout is.
+
+A `.monitors` block in `config.zon` still works exactly as before; `monitors.zon`
+simply wins where both exist.
 
 A `monitors.zon` that is present but **malformed fails the whole load**, rather
 than being skipped as if absent. Skipping it would reset the layout to whatever

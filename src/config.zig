@@ -153,10 +153,10 @@ pub const Monitor = struct {
 };
 
 /// Empty by default: every output keeps the compositor's preferred mode and is
-/// auto-placed. Declare your displays in `monitors.zon` (a named preset per
-/// layout, one of them `active`) or, equivalently, in config.zon's `monitors`
-/// block; where both exist monitors.zon wins, since it is the file a GUI edits.
-/// Either way they are matched by connector name. NOTE: array ORDER defines
+/// auto-placed. Declare your displays in `monitors.zon` (one layout per file;
+/// symlink it to switch between arrangements) or, equivalently, in config.zon's
+/// `monitors` block; where both exist monitors.zon wins, since it is the file a
+/// GUI edits. Either way they are matched by connector name. NOTE: array ORDER defines
 /// monitor numbering / focusmon (Super+,/.) navigation — reach sorts live outputs
 /// into that order (output.zig reorder).
 pub var monitors: []const Monitor = &[_]Monitor{};

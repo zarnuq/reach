@@ -36,22 +36,26 @@
 // part of the config that is not a preference but a description of the hardware
 // in front of you: it changes when you dock, not when you change your mind, it is
 // the only part a GUI has any business rewriting, and one machine's copy is
-// meaningless on another. Its schema is a list of NAMED PRESETS plus the one that
-// is `active`, so a laptop docked, the same laptop alone, and a desktop are three
-// entries in one file rather than three commented-out blocks:
+// meaningless on another. It holds ONE layout:
 //
 //   .{
-//       .active = "docked",
-//       .presets = .{
-//           .{ .name = "docked", .monitors = .{ .{ .name = "DP-5", .x = 0, .y = 0 } } },
-//           .{ .name = "mobile", .monitors = .{ .{ .name = "eDP-1", .x = 0, .y = 0 } } },
+//       .monitors = .{
+//           .{ .name = "DP-5",  .w = 1920, .h = 1080, .x = 0, .y = 0 },
+//           .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 1080 },
 //       },
 //   }
 //
-// Switching layouts is then a one-field edit plus a reload: reload.zig already
-// diffs `config.monitors` by value and re-applies only on a real change, so
-// nothing new is needed to make that work. A `.monitors` block in config.zon
-// still parses and still applies — monitors.zon simply wins where both exist.
+// SWITCHING layouts is a job for the filesystem, not for a selector field: keep a
+// file per arrangement (`monitors/docked.zon`, `monitors/desktop.zon`) and make
+// `monitors.zon` a SYMLINK to the one in use. Re-pointing the link and reloading
+// is then the whole docking gesture, and it needs nothing here — the lookup opens
+// the path, so the link is followed like any other file, and reload.zig already
+// diffs `config.monitors` by value and re-applies only on a real change. A
+// DANGLING link reads exactly like an absent file, which is the behaviour you
+// want from a layout that names a file you deleted.
+//
+// A `.monitors` block in config.zon still parses and still applies — monitors.zon
+// simply wins where both exist.
 //
 // LOOKUP ORDER (first that exists wins, dwl/river-style XDG with a system default
 // for packaging), applied to each file independently:
@@ -144,20 +148,11 @@ pub const CursorSpec = struct {
     shake: ?ShakeSpec = null,
 };
 
-/// One named display layout in monitors.zon. `monitors` carries exactly what a
-/// `.monitors` block in config.zon does, so a layout moves between the two files
-/// by cut and paste.
-pub const Preset = struct {
-    name: []const u8,
-    monitors: []const config.Monitor = &.{},
-};
-
-/// The top-level monitors.zon document.
+/// The top-level monitors.zon document: one layout. `monitors` carries exactly
+/// what a `.monitors` block in config.zon does, so a layout moves between the two
+/// files by cut and paste.
 pub const MonitorFile = struct {
-    /// Which preset to apply, by name. Absent is legal: a file with exactly one
-    /// preset needs no selector.
-    active: ?[]const u8 = null,
-    presets: []const Preset = &.{},
+    monitors: []const config.Monitor = &.{},
 };
 
 /// The top-level config.zon document.
@@ -214,13 +209,9 @@ test "the shipped example monitors file parses" {
         return err;
     };
 
-    // `active` has to name a preset that is actually there, or the example
-    // documents a layout that silently does not apply.
-    const want = mf.active orelse return error.NoActivePreset;
-    for (mf.presets) |p| {
-        if (std.mem.eql(u8, p.name, want)) return;
-    }
-    return error.ActivePresetNotFound;
+    // An example that lists nothing would be ignored at runtime (see `commit`),
+    // so it would document a file that does not work.
+    if (mf.monitors.len == 0) return error.ExampleListsNoOutputs;
 }
 
 /// Binds parsed from the file, if any. binding.registerForSeat reads this: null
@@ -240,11 +231,6 @@ var arena: ?*std.heap.ArenaAllocator = null;
 /// `snapshotDefaults`, so `overlay(defaults)` is a full reset.
 var defaults: FileConfig = .{};
 var defaults_taken = false;
-
-/// The preset monitors.zon selected, for anything that wants to report it. Null
-/// when there is no monitors.zon, or it named nothing usable. BORROWS the live
-/// arena, so it is cleared and re-set by every commit.
-pub var active_preset: ?[]const u8 = null;
 
 /// A parsed-but-not-yet-applied config plus the arena backing it. Both files share
 /// ONE arena: they are read together, committed together and freed together, so
@@ -355,46 +341,21 @@ pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
     // didn't mention this" is encoded), but null is precisely the reset value
     // here — it means "fall back to the compiled-in keymap".
     binds = null;
-    active_preset = null;
     if (defaults_taken) overlay(defaults);
     overlay(staged.fc);
     // monitors.zon LAST, so the dedicated file wins over a `.monitors` block left
     // behind in config.zon rather than racing it.
-    if (staged.mf) |mf| applyPreset(mf);
+    //
+    // Deliberately unconditional: whatever the file lists IS the layout, empty
+    // included. reach does not second-guess it, because the thing that writes the
+    // file is better placed to decide what a sensible layout is — and a rule here
+    // ("ignore an empty list") would be one the writer has to model to predict
+    // what it just did.
+    if (staged.mf) |mf| {
+        config.monitors = mf.monitors;
+        log.info("monitor layout from monitors.zon ({d} outputs)", .{mf.monitors.len});
+    }
     return previous;
-}
-
-/// Point config.monitors at the layout monitors.zon selects.
-///
-/// `active` names it. With no `active`, a file holding exactly ONE preset uses it
-/// — that is unambiguous, and it keeps the simple case free of bookkeeping.
-/// Anything else leaves the layout alone and says why: guessing which of several
-/// layouts was meant is how a monitor ends up rotated at login.
-fn applyPreset(mf: MonitorFile) void {
-    if (mf.presets.len == 0) {
-        log.warn("monitors.zon has no presets; keeping the config.zon layout", .{});
-        return;
-    }
-
-    if (mf.active) |want| {
-        for (mf.presets) |p| {
-            if (!std.mem.eql(u8, p.name, want)) continue;
-            config.monitors = p.monitors;
-            active_preset = p.name;
-            log.info("monitor preset '{s}' ({d} outputs)", .{ p.name, p.monitors.len });
-            return;
-        }
-        log.warn("monitors.zon: no preset named '{s}'", .{want});
-    }
-
-    if (mf.presets.len == 1) {
-        config.monitors = mf.presets[0].monitors;
-        active_preset = mf.presets[0].name;
-        log.info("monitor preset '{s}' (the only one defined)", .{mf.presets[0].name});
-        return;
-    }
-
-    log.warn("monitors.zon: {d} presets and no usable `active`; keeping the config.zon layout", .{mf.presets.len});
 }
 
 /// Free a generation displaced by `commit`. Only safe once nothing points into it.

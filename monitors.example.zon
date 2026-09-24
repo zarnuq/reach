@@ -2,49 +2,36 @@
 //
 // This file is a REFERENCE and a test fixture; unlike config.example.zon it is
 // deliberately NOT installed to /etc, because a system-wide monitor layout would
-// be found by every user who has no monitors.zon of their own and would rotate
-// or reposition their screens on the strength of an example.
+// be found by every user who has no monitors.zon of their own and would rotate or
+// reposition their screens on the strength of an example.
 //
-// Copy it to ~/.config/reach/monitors.zon and edit. Every field except a preset's
-// `name` is optional and falls back to the same default a `.monitors` entry in
-// config.zon has.
+// One file, one layout. To keep several (docked, undocked, a desktop), keep a
+// file per arrangement and make `monitors.zon` a SYMLINK to the one in use:
 //
-// A reload (Super+Shift+r, or `kill -HUP $(pidof reach)`) re-reads this file, and
-// the layout is re-applied only when it actually CHANGED by value — so switching
-// `.active` is the whole gesture for docking, and a reload that changes nothing
-// else costs no flicker.
+//     ~/.config/reach/monitors.zon -> monitors/docked.zon
+//
+// Re-pointing the link and reloading (Super+Shift+r, or `kill -HUP $(pidof reach)`)
+// is then the whole docking gesture. reach knows nothing about that arrangement:
+// it opens `monitors.zon`, the kernel follows the link, and the layout is
+// re-applied only if it actually CHANGED by value — so a reload that switches
+// nothing costs no flicker, and a dangling link reads as no file at all.
+//
+// Every field except `name` is optional and falls back to the same default a
+// `.monitors` entry in config.zon has.
 .{
-    // Which preset below to apply, by name. A file with exactly one preset may
-    // leave this out; with several, a name that matches nothing leaves the
-    // layout alone rather than guessing.
-    .active = "laptop",
-
-    .presets = .{
-        // Array ORDER is monitor numbering: it decides focusmon/tagmon direction
-        // and the `.monitor` index window rules in config.zon use. A head that is
-        // not connected is simply ignored, so a preset may list more than is
-        // plugged in.
-        .{
-            .name = "laptop",
-            .monitors = .{
-                // A rotated head's .w/.h are its MODE; the transform swaps them on
-                // the desktop. This one is 1920x1080 here and occupies 1080x1920.
-                .{ .name = "DP-3", .w = 1920, .h = 1080, .x = 1920, .y = 0, .transform = .rotate_270 },
-                .{ .name = "DP-5", .w = 1920, .h = 1080, .x = 0, .y = 0 },
-                .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 1080 },
-            },
-        },
-        .{
-            .name = "desktop",
-            .monitors = .{
-                // Always give an explicit .x/.y. The defaults are -1,-1, which
-                // means "don't send set_position" — the compositor then auto-places
-                // the head wherever it likes, which is how a rotated panel ends up
-                // beside its neighbour instead of above it.
-                .{ .name = "DP-3", .w = 3440, .h = 1440, .x = 0, .y = 0, .transform = .rotate_180 },
-                .{ .name = "DP-2", .w = 3440, .h = 1440, .x = 0, .y = 1440 },
-                .{ .name = "DP-1", .w = 1920, .h = 1080, .x = 3440, .y = 1440, .refresh = 165000, .transform = .rotate_270 },
-            },
-        },
+    // Array ORDER is monitor numbering: it decides focusmon/tagmon direction and
+    // the `.monitor` index window rules in config.zon use. A head that is not
+    // connected is simply ignored, so a layout may list more than is plugged in.
+    .monitors = .{
+        // Always give an explicit .x/.y. The defaults are -1,-1, which means
+        // "don't send set_position" — the compositor then auto-places the head
+        // wherever it likes, which is how a rotated panel ends up beside its
+        // neighbour instead of above it.
+        .{ .name = "DP-5", .w = 1920, .h = 1080, .x = 0, .y = 0 },
+        .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 1080 },
+        // A rotated head's .w/.h are its MODE; the transform swaps them on the
+        // desktop. This one is 1920x1080 here and occupies 1080x1920, so a
+        // neighbour to its right would start at .x = 1920 + 1080.
+        .{ .name = "DP-3", .w = 1920, .h = 1080, .x = 1920, .y = 0, .transform = .rotate_270 },
     },
 }
