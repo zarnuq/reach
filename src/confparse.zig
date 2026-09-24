@@ -31,11 +31,33 @@
 //       },
 //   }
 //
+// MONITORS: the display layout lives in its OWN file, `monitors.zon`, beside
+// config.zon and found by the same lookup. It is split out because it is the one
+// part of the config that is not a preference but a description of the hardware
+// in front of you: it changes when you dock, not when you change your mind, it is
+// the only part a GUI has any business rewriting, and one machine's copy is
+// meaningless on another. Its schema is a list of NAMED PRESETS plus the one that
+// is `active`, so a laptop docked, the same laptop alone, and a desktop are three
+// entries in one file rather than three commented-out blocks:
+//
+//   .{
+//       .active = "docked",
+//       .presets = .{
+//           .{ .name = "docked", .monitors = .{ .{ .name = "DP-5", .x = 0, .y = 0 } } },
+//           .{ .name = "mobile", .monitors = .{ .{ .name = "eDP-1", .x = 0, .y = 0 } } },
+//       },
+//   }
+//
+// Switching layouts is then a one-field edit plus a reload: reload.zig already
+// diffs `config.monitors` by value and re-applies only on a real change, so
+// nothing new is needed to make that work. A `.monitors` block in config.zon
+// still parses and still applies — monitors.zon simply wins where both exist.
+//
 // LOOKUP ORDER (first that exists wins, dwl/river-style XDG with a system default
-// for packaging):
-//   $XDG_CONFIG_HOME/reach/config.zon
-//   $HOME/.config/reach/config.zon
-//   /etc/reach/config.zon          (shipped by the ebuild)
+// for packaging), applied to each file independently:
+//   $XDG_CONFIG_HOME/reach/{config,monitors}.zon
+//   $HOME/.config/reach/{config,monitors}.zon
+//   /etc/reach/{config,monitors}.zon          (shipped by the ebuild)
 
 const std = @import("std");
 const log = std.log.scoped(.config);
@@ -122,6 +144,22 @@ pub const CursorSpec = struct {
     shake: ?ShakeSpec = null,
 };
 
+/// One named display layout in monitors.zon. `monitors` carries exactly what a
+/// `.monitors` block in config.zon does, so a layout moves between the two files
+/// by cut and paste.
+pub const Preset = struct {
+    name: []const u8,
+    monitors: []const config.Monitor = &.{},
+};
+
+/// The top-level monitors.zon document.
+pub const MonitorFile = struct {
+    /// Which preset to apply, by name. Absent is legal: a file with exactly one
+    /// preset needs no selector.
+    active: ?[]const u8 = null,
+    presets: []const Preset = &.{},
+};
+
 /// The top-level config.zon document.
 pub const FileConfig = struct {
     outer_gap: ?i32 = null,
@@ -163,6 +201,28 @@ test "the shipped example config parses" {
     };
 }
 
+test "the shipped example monitors file parses" {
+    // Same bargain as the test above, with one extra edge: an unknown key here
+    // fails the whole monitors.zon parse, and `stage` treats that as a reason to
+    // apply NOTHING — so a typo in this file would cost a user their keybinds too.
+    var ar: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer ar.deinit();
+    @setEvalBranchQuota(4000);
+    var diag: std.zon.parse.Diagnostics = .{};
+    const mf = std.zon.parse.fromSliceAlloc(MonitorFile, ar.allocator(), @embedFile("monitors.example"), &diag, .{}) catch |err| {
+        std.debug.print("monitors.example.zon: {}\n{f}\n", .{ err, diag });
+        return err;
+    };
+
+    // `active` has to name a preset that is actually there, or the example
+    // documents a layout that silently does not apply.
+    const want = mf.active orelse return error.NoActivePreset;
+    for (mf.presets) |p| {
+        if (std.mem.eql(u8, p.name, want)) return;
+    }
+    return error.ActivePresetNotFound;
+}
+
 /// Binds parsed from the file, if any. binding.registerForSeat reads this: null
 /// means "no file binds, use the compiled-in default keymap"; non-null fully
 /// REPLACES the default action/spawn/chord binds (the desktop binds are always
@@ -181,9 +241,19 @@ var arena: ?*std.heap.ArenaAllocator = null;
 var defaults: FileConfig = .{};
 var defaults_taken = false;
 
-/// A parsed-but-not-yet-applied config plus the arena backing it.
+/// The preset monitors.zon selected, for anything that wants to report it. Null
+/// when there is no monitors.zon, or it named nothing usable. BORROWS the live
+/// arena, so it is cleared and re-set by every commit.
+pub var active_preset: ?[]const u8 = null;
+
+/// A parsed-but-not-yet-applied config plus the arena backing it. Both files share
+/// ONE arena: they are read together, committed together and freed together, so
+/// the generation lifetime reload.zig is built around stays a single thing.
 pub const Staged = struct {
     fc: FileConfig,
+    /// Null when there is no monitors.zon — not when it failed to parse, which
+    /// fails the whole stage instead (see `stage`).
+    mf: ?MonitorFile = null,
     arena: *std.heap.ArenaAllocator,
 };
 
@@ -202,42 +272,68 @@ pub fn load(gpa: std.mem.Allocator) void {
 /// caller then keeps running on the config it already has, which is what makes a
 /// typo in config.zon survivable during a reload.
 pub fn stage(gpa: std.mem.Allocator) ?Staged {
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = locate(&path_buf) orelse {
+    var cfg_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var mon_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cfg_path = locate(&cfg_buf, "/reach/config.zon", "/etc/reach/config.zon");
+    const mon_path = locate(&mon_buf, "/reach/monitors.zon", "/etc/reach/monitors.zon");
+    if (cfg_path == null and mon_path == null) {
         // At startup this means "run on the compiled-in defaults". On a reload it
-        // means the file went away, and we keep what is already loaded rather than
-        // yanking the session back to defaults over a missing file.
-        log.info("no config.zon found; keeping built-in defaults", .{});
+        // means the files went away, and we keep what is already loaded rather
+        // than yanking the session back to defaults over a missing file.
+        log.info("no config.zon or monitors.zon found; keeping built-in defaults", .{});
         return null;
-    };
+    }
 
     const ar = gpa.create(std.heap.ArenaAllocator) catch return null;
     ar.* = .init(gpa);
-    // Everything below allocates from the arena, so one deinit reclaims the file
-    // buffer and the whole parsed AST together.
+    // Everything below allocates from the arena, so one deinit reclaims both file
+    // buffers and both parsed ASTs together.
     const aa = ar.allocator();
-
-    const source = readFileZ(aa, path) catch |err| {
-        log.warn("could not read {s}: {} — keeping current config", .{ path, err });
+    // A half-read generation is never committed: either both files parsed or the
+    // caller keeps the config it already has.
+    var complete = false;
+    defer if (!complete) {
         ar.deinit();
         gpa.destroy(ar);
+    };
+
+    // Either file may be absent on its own. An absent config.zon leaves every
+    // field null, which `overlay` reads as "the file didn't mention this" — i.e.
+    // the compiled-in defaults, exactly as if there were no file at all.
+    var fc: FileConfig = .{};
+    if (cfg_path) |path| fc = parseFile(FileConfig, aa, path) orelse return null;
+
+    // A monitors.zon that is PRESENT but broken fails the whole stage, rather than
+    // being skipped as if absent. Skipping it would reset the layout to whatever
+    // config.zon says — usually nothing — so a typo would scatter the monitors
+    // instead of costing a log line. Same bargain config.zon already makes.
+    var mf: ?MonitorFile = null;
+    if (mon_path) |path| mf = parseFile(MonitorFile, aa, path) orelse return null;
+
+    complete = true;
+    return .{ .fc = fc, .mf = mf, .arena = ar };
+}
+
+/// Read and ZON-parse one file into `aa`. Null (having logged) on any problem, so
+/// every caller can treat it as "keep what we have".
+fn parseFile(comptime T: type, aa: std.mem.Allocator, path: [:0]const u8) ?T {
+    const source = readFileZ(aa, path) catch |err| {
+        log.warn("could not read {s}: {} — keeping current config", .{ path, err });
         return null;
     };
 
-    // The ZON parser inline-unrolls over every FileConfig field at comptime;
-    // each new field costs branches, so lift the quota above the default 1000.
+    // The ZON parser inline-unrolls over every field at comptime; each new field
+    // costs branches, so lift the quota above the default 1000.
     @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
-    const fc = std.zon.parse.fromSliceAlloc(FileConfig, aa, source, &diag, .{}) catch |err| {
-        log.err("config.zon parse failed ({}):\n{f}", .{ err, diag });
+    const parsed = std.zon.parse.fromSliceAlloc(T, aa, source, &diag, .{}) catch |err| {
+        log.err("{s} parse failed ({}):\n{f}", .{ path, err, diag });
         log.warn("keeping current config", .{});
-        ar.deinit();
-        gpa.destroy(ar);
         return null;
     };
 
     log.info("parsed config from {s}", .{path});
-    return .{ .fc = fc, .arena = ar };
+    return parsed;
 }
 
 /// Point config.zig at `staged`, returning the arena it displaces (null on the
@@ -259,9 +355,46 @@ pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
     // didn't mention this" is encoded), but null is precisely the reset value
     // here — it means "fall back to the compiled-in keymap".
     binds = null;
+    active_preset = null;
     if (defaults_taken) overlay(defaults);
     overlay(staged.fc);
+    // monitors.zon LAST, so the dedicated file wins over a `.monitors` block left
+    // behind in config.zon rather than racing it.
+    if (staged.mf) |mf| applyPreset(mf);
     return previous;
+}
+
+/// Point config.monitors at the layout monitors.zon selects.
+///
+/// `active` names it. With no `active`, a file holding exactly ONE preset uses it
+/// — that is unambiguous, and it keeps the simple case free of bookkeeping.
+/// Anything else leaves the layout alone and says why: guessing which of several
+/// layouts was meant is how a monitor ends up rotated at login.
+fn applyPreset(mf: MonitorFile) void {
+    if (mf.presets.len == 0) {
+        log.warn("monitors.zon has no presets; keeping the config.zon layout", .{});
+        return;
+    }
+
+    if (mf.active) |want| {
+        for (mf.presets) |p| {
+            if (!std.mem.eql(u8, p.name, want)) continue;
+            config.monitors = p.monitors;
+            active_preset = p.name;
+            log.info("monitor preset '{s}' ({d} outputs)", .{ p.name, p.monitors.len });
+            return;
+        }
+        log.warn("monitors.zon: no preset named '{s}'", .{want});
+    }
+
+    if (mf.presets.len == 1) {
+        config.monitors = mf.presets[0].monitors;
+        active_preset = mf.presets[0].name;
+        log.info("monitor preset '{s}' (the only one defined)", .{mf.presets[0].name});
+        return;
+    }
+
+    log.warn("monitors.zon: {d} presets and no usable `active`; keeping the config.zon layout", .{mf.presets.len});
 }
 
 /// Free a generation displaced by `commit`. Only safe once nothing points into it.
@@ -303,16 +436,16 @@ fn mirror(comptime Spec: type, comptime src: anytype) Spec {
 
 /// First existing candidate path, written into `buf`. Returns null if none exist.
 /// First existing candidate path, written into `buf`. Returns null if none exist.
-fn locate(buf: []u8) ?[:0]const u8 {
+fn locate(buf: []u8, comptime rel: []const u8, comptime system: []const u8) ?[:0]const u8 {
     if (C.getenv("XDG_CONFIG_HOME")) |x| {
         if (std.mem.span(x).len != 0) {
-            if (candidate(buf, &.{ std.mem.span(x), "/reach/config.zon" })) |p| return p;
+            if (candidate(buf, &.{ std.mem.span(x), rel })) |p| return p;
         }
     }
     if (C.getenv("HOME")) |h| {
-        if (candidate(buf, &.{ std.mem.span(h), "/.config/reach/config.zon" })) |p| return p;
+        if (candidate(buf, &.{ std.mem.span(h), "/.config" ++ rel })) |p| return p;
     }
-    if (candidate(buf, &.{"/etc/reach/config.zon"})) |p| return p;
+    if (candidate(buf, &.{system})) |p| return p;
     return null;
 }
 

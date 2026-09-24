@@ -143,16 +143,22 @@ pub const Monitor = struct {
     /// (matches dwl's `-1` sentinel).
     x: i32 = -1,
     y: i32 = -1,
-    /// Output scale (1.0 = unscaled). Only sent when != 1.0.
+    /// Output scale (1.0 = unscaled).
     scale: f64 = 1.0,
+    /// Rotation/reflection. Note a rotated head's `w`/`h` above are its MODE —
+    /// the transform swaps them in the layout, so a 1920x1080 panel at
+    /// `.rotate_270` occupies 1080x1920 and its neighbours' `x` must allow for
+    /// that.
     transform: Transform = .normal,
 };
 
 /// Empty by default: every output keeps the compositor's preferred mode and is
-/// auto-placed. Declare your displays in config.zon's `monitors` (matched by
-/// connector name). NOTE: there, array ORDER defines monitor numbering / focusmon
-/// (Super+,/.) navigation — reach sorts live outputs into that order (output.zig
-/// reorder).
+/// auto-placed. Declare your displays in `monitors.zon` (a named preset per
+/// layout, one of them `active`) or, equivalently, in config.zon's `monitors`
+/// block; where both exist monitors.zon wins, since it is the file a GUI edits.
+/// Either way they are matched by connector name. NOTE: array ORDER defines
+/// monitor numbering / focusmon (Super+,/.) navigation — reach sorts live outputs
+/// into that order (output.zig reorder).
 pub var monitors: []const Monitor = &[_]Monitor{};
 
 /// Number of windows in the master stack.

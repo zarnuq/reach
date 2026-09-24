@@ -109,6 +109,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("config.example.zon"),
     });
 
+    // Same, for the monitor layout. This one is NOT installed to /etc: a
+    // system-wide monitors.zon would be picked up by every user without one of
+    // their own and would move their screens (confparse.zig lookup order).
+    root_mod.addAnonymousImport("monitors.example", .{
+        .root_source_file = b.path("monitors.example.zon"),
+    });
+
     // The actual C libraries behind the generated bindings.
     root_mod.linkSystemLibrary("wayland-client", .{});
     // xkbcommon: resolve xkb keysym NAMES from config.zon binds ("Return", "q",

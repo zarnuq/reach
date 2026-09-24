@@ -149,8 +149,13 @@ fn buildAndApply(serial: u32) void {
             }
         }
         if (!(mon.x == -1 and mon.y == -1)) ch.setPosition(mon.x, mon.y);
-        if (mon.transform != .normal) ch.setTransform(toWlTransform(mon.transform));
-        if (mon.scale != 1.0) ch.setScale(wl.Fixed.fromDouble(mon.scale));
+        // ALWAYS sent, even at their defaults. The head keeps whatever was applied
+        // to it last, so skipping `.normal`/`1.0` would make dropping `.transform`
+        // (or `.scale`) from config.zon a no-op — the monitor would stay rotated
+        // until the session restarted. Sending them unconditionally is what makes
+        // the monitor table declarative: absent field == back to the default.
+        ch.setTransform(toWlTransform(mon.transform));
+        ch.setScale(wl.Fixed.fromDouble(mon.scale));
     }
 
     conf.apply();

@@ -115,6 +115,58 @@ monitors (mode/position/transform/scale, matched by connector name), window rule
 master-stack defaults (`nmaster`/`mfact`), float defaults, border color/width,
 cursor theme/size and shake-to-find, and the full keymap.
 
+### Monitors: `monitors.zon`
+
+The display layout lives in its own file beside `config.zon`, found by the same
+lookup. It is split out because it is the one part of the config that describes
+the hardware in front of you rather than a preference: it changes when you dock,
+it is the only part worth letting a GUI rewrite, and one machine's copy is
+meaningless on another.
+
+Its schema is a list of **named presets** plus the one that is `active`, so a
+docked laptop, that same laptop alone, and a desktop are three entries in one
+file instead of three commented-out blocks:
+
+```zig
+.{
+    .active = "docked",
+    .presets = .{
+        .{
+            .name = "docked",
+            .monitors = .{
+                .{ .name = "DP-5",  .w = 1920, .h = 1080, .x = 0, .y = 0 },
+                .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 1080 },
+            },
+        },
+        .{
+            .name = "mobile",
+            .monitors = .{
+                .{ .name = "eDP-1", .w = 1920, .h = 1200, .x = 0, .y = 0 },
+            },
+        },
+    },
+}
+```
+
+Switching layouts is then a one-field edit plus a reload. Nothing else is
+needed to make that work: reload already diffs the monitor table by value and
+re-applies only on a real change, so `.active = "mobile"` + `Super+Shift+r` is
+the whole docking gesture, and a reload that changes nothing else costs no
+flicker.
+
+With no `active`, a file holding exactly one preset uses it. A name that matches
+nothing leaves the layout alone and logs — guessing between layouts is how a
+screen ends up rotated at login. A `.monitors` block in `config.zon` still works
+exactly as before; `monitors.zon` simply wins where both exist.
+
+A `monitors.zon` that is present but **malformed fails the whole load**, rather
+than being skipped as if absent. Skipping it would reset the layout to whatever
+`config.zon` says — usually nothing — so a typo would scatter your screens
+instead of costing a log line. `monitors.example.zon` documents the schema, and
+unlike `config.example.zon` it is deliberately **not** installed to `/etc`: a
+system-wide layout would be picked up by every user without one of their own and
+would move their screens.
+
 ### Live reload
 
 The config is re-read on demand — no restart, no lost windows:
