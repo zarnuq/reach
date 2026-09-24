@@ -133,8 +133,19 @@ pub const Output = struct {
         switch (event) {
             // Position in the global layout (multi-monitor).
             .position => |ev| {
+                const moved = self.x != ev.x or self.y != ev.y;
                 self.x = ev.x;
                 self.y = ev.y;
+                // Same bargain as `dimensions` below, for the same reason: the
+                // hint we hold is in GLOBAL coordinates, so moving the output
+                // invalidates it by definition — `nonExclusive()` would subtract
+                // it against the new origin and the clip would silently hand the
+                // layout a SHORT rect instead of an error. That is a window that
+                // tiles most of the way down the screen and stops, which is a far
+                // more confusing thing to look at than a window briefly sitting
+                // under the bar. river has to re-send the hint after a move
+                // anyway, since its own coordinates changed.
+                if (moved) self.usable_hint = null;
             },
             // Resolution. The `mode` arg is ignored for now.
             .dimensions => |ev| {

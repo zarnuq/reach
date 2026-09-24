@@ -18,6 +18,7 @@ const river = wayland.client.river;
 const config = @import("config.zig");
 const Context = @import("context.zig");
 const Output = @import("output.zig").Output;
+const query = @import("query.zig");
 
 pub const Window = struct {
     rwm: *river.WindowV1,
@@ -346,16 +347,24 @@ pub const Window = struct {
                     }
                 }
                 if (ctx.focused == self) {
-                    // Prefer a visible window on the same output, then any visible window.
-                    ctx.focused = blk: {
-                        for (ctx.windows.items) |w| {
-                            if (w.output == closing_output and w.visible()) break :blk w;
-                        }
-                        for (ctx.windows.items) |w| {
-                            if (w.visible()) break :blk w;
-                        }
-                        break :blk if (ctx.windows.items.len > 0) ctx.windows.items[0] else null;
-                    };
+                    // The next visible window ON THIS OUTPUT, or nothing.
+                    //
+                    // It used to fall back to any visible window, then to any
+                    // window at all, which sent the keyboard to another MONITOR
+                    // whenever you closed the last window on this one — and
+                    // nothing else moved with it. The pointer stayed put, and so
+                    // did the selection the bar draws, so the next thing you typed
+                    // went to a screen you were not looking at and had no cursor
+                    // on. An empty output that keeps the keyboard until you point
+                    // somewhere is the quieter wrong answer, and sloppy focus
+                    // resolves it the moment the pointer enters anything.
+                    //
+                    // This is the same policy `action.refocus` already applies
+                    // when a desktop change empties an output; the close path was
+                    // the one place that disagreed.
+                    // `output` is optional: a window can be closed before river
+                    // ever placed it on one, and then there is nothing to stay on.
+                    ctx.focused = if (closing_output) |o| query.topVisibleOn(o) else null;
                     ctx.rwm.manageDirty();
                 }
                 if (self.title) |t| ctx.gpa.free(t);

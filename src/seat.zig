@@ -11,6 +11,7 @@ const river = wayland.client.river;
 const config = @import("config.zig");
 const Context = @import("context.zig");
 const binding = @import("binding.zig");
+const query = @import("query.zig");
 
 pub const Seat = struct {
     rwm: *river.SeatV1,
@@ -47,6 +48,30 @@ pub const Seat = struct {
                 }
             },
             .pointer_leave => {},
+
+            // Where the pointer IS, rather than which window it entered.
+            //
+            // `pointer_enter` above only fires for a window, so an output with
+            // nothing under the cursor — bare desktop, or a monitor whose desktop
+            // is empty — never became the selection. The bar then highlighted the
+            // monitor you last touched a window on, and the desktop keys acted on
+            // it, which is the half that actually bites: `Super+2` switched the
+            // wrong screen while the mouse sat on this one.
+            //
+            // river sends this only inside a manage sequence (motion alone must
+            // not start one), so it is as often as any window manager can know.
+            // That makes the selection correct at the moment it is USED — a
+            // keybind is a manage sequence — while the bar's highlight catches up
+            // on the same beat rather than live under a motionless session.
+            .pointer_position => |ev| {
+                const out = query.outputAt(ev.x, ev.y) orelse return;
+                ctx.pointer_output = out;
+                // Only the OUTPUT selection, never `ctx.focused`: there is no
+                // window under the pointer to focus, and stealing the keyboard
+                // away from the one you were typing in is not what crossing a
+                // screen edge should do.
+                if (config.sloppy_focus) ctx.current_output = out;
+            },
 
             // Click-to-focus and pointer tracking
             .window_interaction => |ev| {

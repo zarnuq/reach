@@ -68,6 +68,17 @@ pub fn fullscreenOn(out: *Output) bool {
 ///
 /// `current_output` is the real answer and is set as soon as any output appears;
 /// the rest is fallback for the window between startup and that first event.
+/// The output whose geometry contains a global point, or null when none does —
+/// which is a real case, not a defensive one: a layout may leave a gap between
+/// heads, and a head that has just been unplugged still has a pointer somewhere.
+pub fn outputAt(x: i32, y: i32) ?*Output {
+    const ctx = Context.get();
+    for (ctx.outputs.items) |o| {
+        if (x >= o.x and x < o.x + o.width and y >= o.y and y < o.y + o.height) return o;
+    }
+    return null;
+}
+
 pub fn selectedOutput() ?*Output {
     const ctx = Context.get();
     if (ctx.current_output) |o| return o;
