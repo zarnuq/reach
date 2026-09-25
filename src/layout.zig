@@ -53,13 +53,19 @@ pub fn arrange(out: *Output) void {
     const nmaster = @min(n, out.nmaster);
     const nstack = n - nmaster;
 
-    // Master column width: full width if there is no stack, else mfact of it
-    // (leaving an inner gap before the stack).
-    const master_w: i32 = if (nstack > 0)
+    // Master column width: zero when the column holds nothing (nmaster == 0 puts
+    // every window in the stack, so reserving mfact for it would strand a dead
+    // band of background), full width if there is no stack, else mfact of it.
+    const master_w: i32 = if (nmaster == 0)
+        0
+    else if (nstack > 0)
         @intFromFloat(out.mfact * @as(f32, @floatFromInt(usable_w)))
     else
         usable_w;
-    const stack_w: i32 = if (nstack > 0) usable_w - master_w - config.inner_gap else 0;
+    // The gutter between the columns only exists when BOTH columns do — an empty
+    // master column must not push the stack over by an inner gap either.
+    const gutter: i32 = if (nmaster > 0 and nstack > 0) config.inner_gap else 0;
+    const stack_w: i32 = if (nstack > 0) usable_w - master_w - gutter else 0;
 
     for (tiled.items, 0..) |w, idx| {
         const i: i32 = @intCast(idx);
@@ -79,7 +85,7 @@ pub fn arrange(out: *Output) void {
             // rule as the master column above.
             const si = i - nmaster;
             const cell_h = @divFloor(usable_h - (nstack - 1) * config.inner_gap, nstack);
-            w.x = usable_x + master_w + config.inner_gap;
+            w.x = usable_x + master_w + gutter;
             w.y = usable_y + si * (cell_h + config.inner_gap);
             w.width = stack_w;
             w.height = if (si == nstack - 1) usable_y + usable_h - w.y else cell_h;

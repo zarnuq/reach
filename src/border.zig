@@ -275,12 +275,13 @@ fn focusedLines() ?Lines {
         // TOP half when it is the master (left, cidx 0), BOTTOM when it is the
         // stack (right, cidx 1).
         //
-        // Only this case and its stacked twin need the usable area, so it is worked
-        // out here rather than every frame. It MUST match what layout.arrange used,
-        // so it comes from the same Output.usableArea — exclusive zones included.
-        const area = out.usableArea();
-        const uy = area.y + config.outer_gap;
-        const uh = area.height - 2 * config.outer_gap;
+        // The seam spans the two panes, so it is measured off a PANE — side by side
+        // they are both full height, so the focused one's own extent is the seam's.
+        // Taking it from the usable area instead would only hold while the layout
+        // happens to fill that area, and it is layout.arrange, not this file, that
+        // decides whether it does.
+        const uy = f.y;
+        const uh = f.height;
 
         const x = if (cidx == 1) f.x - t else f.x + f.width;
         const mid = uy + @divFloor(uh, 2);
@@ -288,13 +289,14 @@ fn focusedLines() ?Lines {
         const ay1 = if (cidx == 1) uy + uh else mid;
         l.vline(x, t, uy, uy + uh, ay0, ay1);
     } else if (nmaster != 1 and total == 2) {
-        // Two panes stacked: one full-width divider on the focused pane's facing
-        // edge, cut in half — LEFT or RIGHT half active depending on which pane is
-        // focused. Same usable area as above — a side-anchored panel moves the left
-        // edge and shrinks the width, so this can't just be `outer_gap`.
-        const area = out.usableArea();
-        const ux = area.x + config.outer_gap;
-        const uw = area.width - 2 * config.outer_gap;
+        // Two panes stacked — both in the master column (nmaster >= 2) or both in
+        // the stack (nmaster == 0). One divider across them on the focused pane's
+        // facing edge, cut in half — LEFT or RIGHT half active depending on which
+        // pane is focused. Measured off the focused pane for the reason above: when
+        // the panes share a column that is narrower than the output, a divider run
+        // across the usable width spills over the empty column and any panel.
+        const ux = f.x;
+        const uw = f.width;
 
         const y = if (cidx == 1) f.y - t else f.y + f.height;
         const mid = ux + @divFloor(uw, 2);
