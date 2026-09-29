@@ -262,10 +262,9 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
                 ctx.gpa.destroy(w);
                 return;
             };
-            ctx.focused = w;
             // The new window is focused, so its monitor becomes the selected one
-            // (keeps the bar highlight and desktop keys on the window you just opened).
-            if (out) |o| ctx.current_output = o;
+            // (keeps the desktop keys on the window you just opened).
+            ctx.focus(w);
             log.info("window created (total {d})", .{ctx.windows.items.len});
         },
 

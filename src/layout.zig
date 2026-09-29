@@ -37,8 +37,8 @@ pub fn arrange(out: *Output) void {
     if (n == 0) return;
 
     // What's actually ours to lay out: the output minus every layer surface's
-    // exclusive zone (a panel, a notification daemon, an on-screen keyboard) and
-    // minus reach's own bar strip. See Output.usableArea.
+    // exclusive zone (a panel, a notification daemon, an on-screen keyboard). See
+    // Output.usableArea.
     //
     // This is a full RECT, not just a height — a left- or right-anchored panel
     // shrinks the width and moves the left edge, which is why the origin is

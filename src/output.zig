@@ -1,9 +1,9 @@
 // output.zig — a monitor.
 //
 // Wraps a river_output_v1 and tracks its position + size in the global
-// coordinate space. The layout uses these dimensions; each output also owns its
-// status bar (bar.zig) and the layer-shell handle used to steer new layer
-// surfaces (rofi, notifications) onto the focused monitor.
+// coordinate space. The layout uses these dimensions; each output also owns the
+// layer-shell handle used to steer new layer surfaces (rofi, notifications) onto
+// the focused monitor, and learn how much of it panels have claimed.
 
 const std = @import("std");
 const log = std.log.scoped(.output);
@@ -37,7 +37,7 @@ pub const Output = struct {
 
     // river's `non_exclusive_area`: what's left of the output after subtracting
     // every layer surface's exclusive zone. Stored EXACTLY as received — raw, in
-    // GLOBAL coordinates — and converted on demand by `nonExclusive()`.
+    // GLOBAL coordinates — and converted on demand by `usableArea()`.
     //
     // Kept raw on purpose. Converting here would need `x`/`y`/`width`/`height`,
     // and river makes no promise that `position`/`dimensions` arrive before this
@@ -51,7 +51,9 @@ pub const Output = struct {
     // config.desktops). Exactly one, always — there is no empty view.
     desktop: u32 = 1,
 
-    // Per-output layout state
+    // Per-output layout state, seeded from config.mfact/nmaster by `create` and
+    // stepped by the setmfact/incnmaster actions. The literals here only matter
+    // to tests that build an Output directly.
     mfact: f32 = 0.55,
     nmaster: i32 = 1,
 
@@ -64,15 +66,12 @@ pub const Output = struct {
     // open on the focused monitor rather than river's fallback (the first output).
     layer_output: ?*river.LayerShellOutputV1 = null,
 
-    /// The part of this output no layer surface has claimed, output-local: the
-    /// raw `non_exclusive_area` hint translated out of global coordinates and
-    /// clipped to our own bounds. The whole output when no hint has arrived, so a
-    /// compositor that never sends one behaves exactly as it did before.
-    ///
-    /// This does NOT subtract reach's own bar — the bar spans this area, so it
-    /// needs the value before its own strip is taken out. For laying windows out,
-    /// use `usableArea()`.
-    pub fn nonExclusive(self: *const Output) Rect {
+    /// The part of this output available to the window layout, output-local: the
+    /// raw `non_exclusive_area` hint (everything no layer surface has claimed)
+    /// translated out of global coordinates and clipped to our own bounds. The
+    /// whole output when no hint has arrived, so a compositor that never sends
+    /// one behaves exactly as it did before.
+    pub fn usableArea(self: *const Output) Rect {
         const hint = self.usable_hint orelse
             return .{ .x = 0, .y = 0, .width = self.width, .height = self.height };
 
@@ -97,21 +96,10 @@ pub const Output = struct {
         return .{ .x = x, .y = y, .width = @max(0, w), .height = @max(0, h) };
     }
 
-    /// The part of this output available to the window layout, output-local.
-    ///
-    /// Identical to `nonExclusive()` now that reach draws no bar of its own: a
-    /// panel is someone else's layer surface, and its exclusive zone already
-    /// reaches the layout through that. Kept as the name layout.zig and
-    /// border.zig both call, so the two cannot drift if anything is ever carved
-    /// out of the output again.
-    pub fn usableArea(self: *const Output) Rect {
-        return self.nonExclusive();
-    }
-
     pub fn create(rwm: *river.OutputV1) !*Output {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Output);
-        self.* = .{ .rwm = rwm };
+        self.* = .{ .rwm = rwm, .mfact = configMfact(), .nmaster = configNmaster() };
         rwm.setListener(*Output, listener, self);
 
         if (ctx.layer_shell) |ls| {
@@ -138,12 +126,12 @@ pub const Output = struct {
                 self.y = ev.y;
                 // Same bargain as `dimensions` below, for the same reason: the
                 // hint we hold is in GLOBAL coordinates, so moving the output
-                // invalidates it by definition — `nonExclusive()` would subtract
+                // invalidates it by definition — `usableArea()` would subtract
                 // it against the new origin and the clip would silently hand the
                 // layout a SHORT rect instead of an error. That is a window that
                 // tiles most of the way down the screen and stops, which is a far
                 // more confusing thing to look at than a window briefly sitting
-                // under the bar. river has to re-send the hint after a move
+                // under a panel. river has to re-send the hint after a move
                 // anyway, since its own coordinates changed.
                 if (moved) self.usable_hint = null;
             },
@@ -185,23 +173,12 @@ pub const Output = struct {
             // proxy. If this is the last output, windows get null and will be
             // re-homed when an output reappears (wm.zig output event handler).
             .removed => {
-                // Find a surviving output BEFORE removing ourselves so windows
-                // on this output don't go dark when another monitor still exists.
-                var fallback: ?*Output = null;
-                for (ctx.outputs.items) |o| {
-                    if (o != self) {
-                        fallback = o;
-                        break;
-                    }
-                }
+                // The first surviving output takes our windows, so they don't go
+                // dark when another monitor still exists.
+                if (std.mem.indexOfScalar(*Output, ctx.outputs.items, self)) |i| _ = ctx.outputs.orderedRemove(i);
+                const fallback: ?*Output = if (ctx.outputs.items.len > 0) ctx.outputs.items[0] else null;
                 for (ctx.windows.items) |w| {
                     if (w.output == self) w.output = fallback;
-                }
-                for (ctx.outputs.items, 0..) |o, i| {
-                    if (o == self) {
-                        _ = ctx.outputs.orderedRemove(i);
-                        break;
-                    }
                 }
                 // Don't leave the selection (or pointer target) dangling at a
                 // freed output; fall back to whatever monitor remains.
@@ -222,6 +199,19 @@ pub const Output = struct {
         }
     }
 };
+
+/// config.mfact, clamped to the range the setmfact action keeps it in. The file is
+/// not trusted to: mfact past 1 makes the stack column negative, and every stack
+/// window collapses to a pixel.
+pub fn configMfact() f32 {
+    return std.math.clamp(config.mfact, 0.1, 0.9);
+}
+
+/// config.nmaster, floored at 0 like the incnmaster action. A negative count
+/// would reserve an empty master column and skew every row height.
+pub fn configNmaster() i32 {
+    return @max(0, config.nmaster);
+}
 
 /// wl_output listener — we only care about the connector name. Once it arrives
 /// (or changes) we re-sort `ctx.outputs` so monitor numbering follows config.
@@ -290,7 +280,7 @@ fn layerOutputListener(
     self: *Output,
 ) void {
     switch (event) {
-        // Stashed raw; `nonExclusive()` does the global→local conversion, so this
+        // Stashed raw; `usableArea()` does the global→local conversion, so this
         // does not care whether our own geometry has arrived yet.
         .non_exclusive_area => |ev| self.usable_hint = .{
             .x = ev.x,

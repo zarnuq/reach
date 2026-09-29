@@ -8,11 +8,8 @@
 //      event unions). That generated code becomes the `wayland` module we import
 //      from src/.
 //   2. Define the `reach` executable, give it the `wayland` module, and
-//      link the C libraries the bindings call into (`libwayland-client`, libc).
-//
-// Milestone 1 keeps this minimal: only the globals we actually touch are
-// generated, and there is no font baker / xkbcommon yet (those arrive in later
-// milestones and are marked with TODO below).
+//      link the C libraries it calls into (`libwayland-client`, `xkbcommon`,
+//      libc).
 
 const std = @import("std");
 const wayland = @import("wayland");
@@ -69,7 +66,6 @@ pub fn build(b: *std.Build) void {
     // version. This includes the interfaces reach uses today and river's full
     // device-configuration surface for future config options.
     scanner.generate("wl_compositor", 4); // wl_surface / wl_region factory
-    scanner.generate("wl_subcompositor", 1); // wl_subsurface (border pieces)
     scanner.generate("wl_seat", 7); // referenced by river_seat_v1.wl_seat event
     scanner.generate("wl_output", 4); // referenced by river_output_v1.wl_output event
     scanner.generate("wp_viewporter", 1); // scale the 1x1 color buffer to border size

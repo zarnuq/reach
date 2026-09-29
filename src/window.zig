@@ -28,7 +28,7 @@ pub const Window = struct {
     output: ?*Output = null,
 
     // Last title river reported, owned/duped by us (null = never set / cleared).
-    // The bar shows this for the focused window on each output.
+    // The state socket publishes this for the top window on each output.
     title: ?[:0]u8 = null,
 
     // Last app_id river reported (owned/duped). Used for window rules.
@@ -61,7 +61,7 @@ pub const Window = struct {
     // Fullscreen state. `fullscreen` is what we want; `fs_applied` is what we've
     // already told river, so manage() only issues the request on a real change.
     // While fullscreen, river owns the window's size/position and stacks it above
-    // shell surfaces (the bar) — see river_window_v1.fullscreen.
+    // shell surfaces (a panel) — see river_window_v1.fullscreen.
     fullscreen: bool = false,
     fs_applied: bool = false,
 
@@ -323,9 +323,9 @@ pub const Window = struct {
                 self.applyRules();
             },
 
-            // The window's title changed. Dup it for the bar, and ask river for a
-            // fresh cycle so the bar redraws (a title change alone wouldn't
-            // otherwise trigger one).
+            // The window's title changed. Dup it for the state socket, and ask
+            // river for a fresh cycle so it gets published (a title change alone
+            // wouldn't otherwise trigger one).
             .title => |ev| {
                 if (self.title) |t| ctx.gpa.free(t);
                 self.title = if (ev.title) |s|
@@ -340,12 +340,7 @@ pub const Window = struct {
             // The window is gone. Unlink, fix up focus, and release proxies.
             .closed => {
                 const closing_output = self.output;
-                for (ctx.windows.items, 0..) |w, i| {
-                    if (w == self) {
-                        _ = ctx.windows.orderedRemove(i);
-                        break;
-                    }
-                }
+                if (std.mem.indexOfScalar(*Window, ctx.windows.items, self)) |i| _ = ctx.windows.orderedRemove(i);
                 if (ctx.focused == self) {
                     // The next visible window ON THIS OUTPUT, or nothing.
                     //
@@ -353,7 +348,7 @@ pub const Window = struct {
                     // window at all, which sent the keyboard to another MONITOR
                     // whenever you closed the last window on this one — and
                     // nothing else moved with it. The pointer stayed put, and so
-                    // did the selection the bar draws, so the next thing you typed
+                    // did the selection a panel draws, so the next thing you typed
                     // went to a screen you were not looking at and had no cursor
                     // on. An empty output that keeps the keyboard until you point
                     // somewhere is the quieter wrong answer, and sloppy focus

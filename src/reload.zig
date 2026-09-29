@@ -36,6 +36,7 @@ const Context = @import("context.zig");
 const binding = @import("binding.zig");
 const gamma = @import("gamma.zig");
 const outputconfig = @import("outputconfig.zig");
+const output = @import("output.zig");
 const shake = @import("shake.zig");
 
 /// A reload has been asked for and will be applied by the next manage cycle.
@@ -67,6 +68,8 @@ pub fn apply() void {
     const old_cursor = cursorSettings();
     const old_monitors = config.monitors;
     const old_temperature = config.gamma.temperature;
+    const old_mfact = config.mfact;
+    const old_nmaster = config.nmaster;
 
     // Tear the bindings down while their `spawn` strings are still valid memory,
     // then swap the config in.
@@ -97,6 +100,17 @@ pub fn apply() void {
     // adjustment made since the session started.
     if (config.gamma.temperature != old_temperature) gamma.reapply();
 
+    // mfact/nmaster are per-output runtime state seeded from the config, and the
+    // setmfact/incnmaster keybinds move them from there. Push a new default onto
+    // every output only when the file actually changed it, so a reload for some
+    // unrelated edit doesn't throw away the layout you have adjusted by hand.
+    const mfact_changed = config.mfact != old_mfact;
+    const nmaster_changed = config.nmaster != old_nmaster;
+    for (ctx.outputs.items) |o| {
+        if (mfact_changed) o.mfact = output.configMfact();
+        if (nmaster_changed) o.nmaster = output.configNmaster();
+    }
+
     // `env` and `autostart` are deliberately one-shot: the variables were exported
     // into a process tree that already exists, and the programs have already run.
     // Re-doing either would not reach existing children and would duplicate the
@@ -105,7 +119,7 @@ pub fn apply() void {
         log.info("reload: `env` and `autostart` are startup-only and were not re-applied", .{});
     }
 
-    // Colors, gaps, mfact, nmaster, border thickness and the window rules need no
+    // Colors, gaps, border thickness and the window rules need no
     // action at all: every one of them is read fresh by the manage/render cycle
     // this reload is running inside.
     log.info("config reloaded", .{});
@@ -141,4 +155,3 @@ fn monitorsEql(a: []const config.Monitor, b: []const config.Monitor) bool {
     }
     return true;
 }
-

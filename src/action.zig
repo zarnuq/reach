@@ -25,7 +25,6 @@
 const std = @import("std");
 
 const config = @import("config.zig");
-const confparse = @import("confparse.zig");
 const gamma = @import("gamma.zig");
 const reload = @import("reload.zig");
 const Context = @import("context.zig");
@@ -67,45 +66,6 @@ pub const Action = union(enum) {
     // while its listener is still on the stack.
     reload,
 };
-
-/// confparse.ActionSpec → the real Action union (chords excluded; they come in
-/// structurally via KeySpec.chord, not as an action).
-pub fn toAction(a: confparse.ActionSpec) Action {
-    return switch (a) {
-        .view => |v| .{ .view = v },
-        .send => |v| .{ .send = v },
-        .spawn => |v| .{ .spawn = v },
-        .quit => .quit,
-        .killclient => .killclient,
-        .zoom => .zoom,
-        .togglefloating => .togglefloating,
-        .togglefullscreen => .togglefullscreen,
-        .move => |d| .{ .move = .{ .x = d.x, .y = d.y } },
-        .resize => |d| .{ .resize = .{ .x = d.x, .y = d.y } },
-        .focusstack => |v| .{ .focusstack = v },
-        .setmfact => |v| .{ .setmfact = v },
-        .incnmaster => |v| .{ .incnmaster = v },
-        .focusmon => |v| .{ .focusmon = v },
-        .sendmon => |v| .{ .sendmon = v },
-        .brightness => |v| .{ .brightness = v },
-        .reload => .reload,
-    };
-}
-
-test "config action conversion preserves payloads" {
-    const view = toAction(.{ .view = 4 });
-    try std.testing.expectEqual(@as(u32, 4), view.view);
-
-    const move = toAction(.{ .move = .{ .x = -12, .y = 7 } });
-    try std.testing.expectEqual(@as(i32, -12), move.move.x);
-    try std.testing.expectEqual(@as(i32, 7), move.move.y);
-
-    const mfact = toAction(.{ .setmfact = 0.05 });
-    try std.testing.expectEqual(@as(f32, 0.05), mfact.setmfact);
-
-    const dim = toAction(.{ .brightness = -5 });
-    try std.testing.expectEqual(@as(i32, -5), dim.brightness);
-}
 
 // ---------------------------------------------------------------------------
 // Execution
@@ -225,24 +185,15 @@ fn refocus(out: *Output) void {
     if (ctx.focused) |f| {
         if (f.output == out and f.visible()) return; // still valid
     }
-    for (ctx.windows.items) |w| {
-        if (w.output == out and w.visible()) {
-            ctx.focused = w;
-            return;
-        }
-    }
-    ctx.focused = null;
+    ctx.focused = query.topVisibleOn(out);
 }
 
+/// Move `w` to the head of the stack (master), shifting the windows above it
+/// down one place. In place, so it cannot fail.
 fn promoteToMaster(w: *Window) void {
     const ctx = Context.get();
-    for (ctx.windows.items, 0..) |win, i| {
-        if (win == w and i > 0) {
-            _ = ctx.windows.orderedRemove(i);
-            ctx.windows.insert(ctx.gpa, 0, w) catch {};
-            break;
-        }
-    }
+    const i = std.mem.indexOfScalar(*Window, ctx.windows.items, w) orelse return;
+    std.mem.rotate(*Window, ctx.windows.items[0 .. i + 1], i);
 }
 
 fn focusStack(dir: i32) void {
@@ -349,21 +300,12 @@ fn resizeFloating(dw: i32, dh: i32) void {
     f.y = @min(f.y, @max(0, o.height - f.height));
 }
 
-/// Index of `out` in the output list, or null if not present.
-fn outputIndex(out: *Output) ?usize {
-    const ctx = Context.get();
-    for (ctx.outputs.items, 0..) |o, i| {
-        if (o == out) return i;
-    }
-    return null;
-}
-
 /// The output `dir` steps away from `out` (wrapping). Null if there's only one.
 fn adjacentOutput(out: *Output, dir: i32) ?*Output {
     const ctx = Context.get();
     const n = ctx.outputs.items.len;
     if (n < 2) return null;
-    const i = outputIndex(out) orelse return null;
+    const i = std.mem.indexOfScalar(*Output, ctx.outputs.items, out) orelse return null;
     const next = if (dir > 0) (i + 1) % n else (i + n - 1) % n;
     return ctx.outputs.items[next];
 }
@@ -463,6 +405,3 @@ pub fn spawn(cmd: [:0]const u8) void {
     var status: c_int = 0;
     _ = std.c.waitpid(pid1, &status, 0);
 }
-
-// ---------------------------------------------------------------------------
-// Action execution

@@ -21,7 +21,9 @@
 // is just a number handed to set_xcursor_theme — but the deltas above are the
 // ONLY pointer information reach has, and you cannot draw at a cursor whose
 // position you don't know. The base cursor theme/size is still applied from
-// this file (applyPending), which is why the pending_size plumbing stays.
+// this file (applyPending), which is why the pending_size plumbing stays. The
+// timer that once animated the size now only ticks the sustained-shake
+// accumulator.
 
 const std = @import("std");
 const linux = std.os.linux;
@@ -31,18 +33,10 @@ const config = @import("config.zig");
 const Context = @import("context.zig");
 const action = @import("action.zig");
 
-// This Zig's std.posix has no open/ioctl; the codebase already calls libc
-// directly elsewhere (popen, fopen, setenv).
-const C = struct {
-    extern fn open(path: [*:0]const u8, flags: c_int, ...) c_int;
-    extern fn read(fd: c_int, buf: [*]u8, nbyte: usize) isize;
-    extern fn close(fd: c_int) c_int;
-    extern fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
-
-    const O_RDONLY: c_int = 0;
-    const O_NONBLOCK: c_int = 0o4000;
-    const O_CLOEXEC: c_int = 0o2000000;
-};
+// This Zig's std.posix has no open/ioctl, so the device handles go through libc
+// (std.c). ioctl alone is declared here: std.c types the request as c_int, and
+// every EVIOCGBIT has bit 31 (_IOC_READ) set.
+extern fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
 
 const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
@@ -129,34 +123,47 @@ const Sample = struct {
     seg: f64,
 };
 
+/// Watched devices, in poll order. wm.zig's poll loop reads these two directly;
+/// `devices` holds the matching per-device motion state.
 pub var device_fds: [MAX_DEVICES]i32 = [_]i32{-1} ** MAX_DEVICES;
 pub var device_count: usize = 0;
+var devices: [MAX_DEVICES]Device = undefined;
 
-// Absolute devices report a POSITION, not a delta, so each one needs its own
-// previous position to subtract — unlike the relative path, where every device
-// can pour straight into the shared accumulator.
-//
-// `have` is per AXIS, and is set by the sample that stores the coordinate rather
-// than by the finger-down event: a touchpad sends BTN_TOUCH before the position,
-// so trusting the press would difference the first sample of a touch against
-// wherever the LAST touch ended — one jump the width of the pad, every time a
-// finger lands.
-var device_abs: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
-var abs_x: [MAX_DEVICES]i32 = undefined;
-var abs_y: [MAX_DEVICES]i32 = undefined;
-var abs_have_x: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
-var abs_have_y: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
+/// Per-device motion state. Absolute devices report a POSITION, not a delta, so
+/// each one needs its own previous position to subtract — unlike the relative
+/// path, where every device can pour straight into the shared accumulator.
+const Device = struct {
+    absolute: bool,
 
-/// More than one finger on the pad. Two-finger scrolling is the shake gesture
-/// exactly: hid-multitouch keeps ABS_X/ABS_Y on the first contact, so repeated
-/// up-down strokes pile travel into a small box and score well above THRESHOLD.
-/// The pointer isn't moving during any of it — the compositor is turning those
-/// contacts into scroll — so the motion is dropped rather than fed to the
-/// detector, and the origin is invalidated on every transition because the
-/// emulated position jumps to whichever contact remains.
-var multi: [MAX_DEVICES]bool = [_]bool{false} ** MAX_DEVICES;
+    // `have_*` is per AXIS, and is set by the sample that stores the coordinate
+    // rather than by the finger-down event: a touchpad sends BTN_TOUCH before
+    // the position, so trusting the press would difference the first sample of
+    // a touch against wherever the LAST touch ended — one jump the width of the
+    // pad, every time a finger lands.
+    x: i32 = 0,
+    y: i32 = 0,
+    have_x: bool = false,
+    have_y: bool = false,
 
-/// Animation tick; armed only while the size is moving.
+    /// More than one finger on the pad. Two-finger scrolling is the shake
+    /// gesture exactly: hid-multitouch keeps ABS_X/ABS_Y on the first contact,
+    /// so repeated up-down strokes pile travel into a small box and score well
+    /// above THRESHOLD. The pointer isn't moving during any of it — the
+    /// compositor is turning those contacts into scroll — so the motion is
+    /// dropped rather than fed to the detector, and the origin is invalidated
+    /// on every transition because the emulated position jumps to whichever
+    /// contact remains.
+    multi: bool = false,
+
+    /// Forget the last position, so the next one only sets the origin.
+    fn forgetOrigin(self: *Device) void {
+        self.have_x = false;
+        self.have_y = false;
+    }
+};
+
+/// Ticks the sustained-shake accumulator (~60 Hz); armed only while a shake is
+/// in progress.
 pub var timer_fd: ?i32 = null;
 
 var samples: [MAX_SAMPLES]Sample = undefined;
@@ -170,7 +177,6 @@ var acc_x: f64 = 0;
 var acc_y: f64 = 0;
 var last_sample_us: u64 = 0;
 
-var sent_size: u32 = 0;
 var pending_size: ?u32 = null;
 var last_shake_us: u64 = 0; // last time the ratio test passed
 var shake_us: u64 = 0; // how long the shake has been sustained
@@ -195,11 +201,11 @@ const Kind = enum { relative, absolute };
 
 fn pointerKind(fd: c_int) ?Kind {
     var evbits = [_]u8{0} ** 4;
-    if (C.ioctl(fd, EVIOCGBIT(0, evbits.len), &evbits) < 0) return null;
+    if (ioctl(fd, EVIOCGBIT(0, evbits.len), &evbits) < 0) return null;
 
     if (evbits[EV_REL >> 3] & (@as(u8, 1) << @intCast(EV_REL & 7)) != 0) {
         var relbits = [_]u8{0} ** 2;
-        if (C.ioctl(fd, EVIOCGBIT(EV_REL, relbits.len), &relbits) >= 0) {
+        if (ioctl(fd, EVIOCGBIT(EV_REL, relbits.len), &relbits) >= 0) {
             const need: u8 = (1 << REL_X) | (1 << REL_Y);
             if (relbits[0] & need == need) return .relative;
         }
@@ -207,7 +213,7 @@ fn pointerKind(fd: c_int) ?Kind {
 
     if (evbits[EV_ABS >> 3] & (@as(u8, 1) << @intCast(EV_ABS & 7)) != 0) {
         var absbits = [_]u8{0} ** 8;
-        if (C.ioctl(fd, EVIOCGBIT(EV_ABS, absbits.len), &absbits) >= 0) {
+        if (ioctl(fd, EVIOCGBIT(EV_ABS, absbits.len), &absbits) >= 0) {
             const need: u8 = (1 << ABS_X) | (1 << ABS_Y);
             if (absbits[0] & need == need) return .absolute;
         }
@@ -217,7 +223,6 @@ fn pointerKind(fd: c_int) ?Kind {
 }
 
 pub fn start() void {
-    sent_size = config.cursor.size;
     pending_size = config.cursor.size;
 
     if (!config.cursor.shake.enabled) return;
@@ -227,14 +232,14 @@ pub fn start() void {
     var i: u32 = 0;
     while (i < 64 and device_count < MAX_DEVICES) : (i += 1) {
         const path = std.fmt.bufPrintZ(&name_buf, "/dev/input/event{d}", .{i}) catch continue;
-        const fd = C.open(path.ptr, C.O_RDONLY | C.O_NONBLOCK | C.O_CLOEXEC);
+        const fd = std.c.open(path.ptr, .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .CLOEXEC = true });
         if (fd < 0) continue;
         const kind = pointerKind(fd) orelse {
-            _ = C.close(fd);
+            _ = std.c.close(fd);
             continue;
         };
         device_fds[device_count] = fd;
-        device_abs[device_count] = kind == .absolute;
+        devices[device_count] = .{ .absolute = kind == .absolute };
         device_count += 1;
     }
 
@@ -252,34 +257,40 @@ pub fn start() void {
     log.info("shake to find: watching {d} pointer device(s)", .{device_count});
 }
 
-/// Close every watched device and disarm the animation timer, so `start` can be
-/// re-run against a changed `config.cursor`. The event loop rebuilds its pollfd set
-/// from `device_fds`/`device_count` each iteration, so clearing them here is enough
-/// — but this must not run mid-poll, hence reload's manage-cycle deferral.
+/// Close every watched device and the shake timer, so `start` can be re-run
+/// against a changed `config.cursor`. The event loop rebuilds its pollfd set from
+/// `device_fds`/`device_count` each iteration, so clearing them here is enough —
+/// but this must not run mid-poll, hence reload's manage-cycle deferral. Per-device
+/// state needs no reset: `start` initialises each slot as it opens it.
 pub fn stop() void {
-    for (device_fds[0..device_count]) |fd| _ = C.close(fd);
+    for (device_fds[0..device_count]) |fd| _ = std.c.close(fd);
     device_fds = [_]i32{-1} ** MAX_DEVICES;
     device_count = 0;
-    multi = [_]bool{false} ** MAX_DEVICES;
-    abs_have_x = [_]bool{false} ** MAX_DEVICES;
-    abs_have_y = [_]bool{false} ** MAX_DEVICES;
 
     if (timer_fd) |fd| {
-        _ = C.close(fd);
+        _ = std.c.close(fd);
         timer_fd = null;
     }
 
-    // Drop the detector's history; the samples describe a gesture that is no
-    // longer in progress on devices that no longer exist.
-    head = 0;
-    count = 0;
-    path_sum = 0;
+    // Drop the detector's state; it describes a gesture that is no longer in
+    // progress on devices that no longer exist.
+    resetGesture();
     vx = 0;
     vy = 0;
     acc_x = 0;
     acc_y = 0;
+}
+
+/// Forget the gesture in progress — the motion history, the sustained-shake
+/// accumulator and the tick clock — so the next shake starts from a clean window.
+/// Clearing `last_tick_us` is what lets sampleMotion arm the timer again.
+fn resetGesture() void {
+    head = 0;
+    count = 0;
+    path_sum = 0;
     shake_us = 0;
     fired = false;
+    last_tick_us = 0;
 }
 
 fn armTimer(on: bool) void {
@@ -296,12 +307,13 @@ fn armTimer(on: bool) void {
 pub fn onMotion(index: usize) bool {
     if (index >= device_count) return false;
     const fd = device_fds[index];
+    const dev = &devices[index];
 
     var buf: [@sizeOf(InputEvent) * 32]u8 align(@alignOf(InputEvent)) = undefined;
     var moved = false;
 
     while (true) {
-        const n = C.read(fd, &buf, buf.len);
+        const n = std.c.read(fd, &buf, buf.len);
         if (n <= 0) break;
         const events = std.mem.bytesAsSlice(InputEvent, buf[0..@intCast(n)]);
         for (events) |ev| {
@@ -314,18 +326,18 @@ pub fn onMotion(index: usize) bool {
                 // A position, differenced against this device's last one to give
                 // the accumulator the same kind of delta the relative branch
                 // hands it. The first sample of a touch only sets the origin.
-                // Guarded on `device_abs` so a hybrid device classified relative
+                // Guarded on `absolute` so a hybrid device classified relative
                 // can't feed the same motion in twice.
-                EV_ABS => if (device_abs[index] and !multi[index]) switch (ev.code) {
+                EV_ABS => if (dev.absolute and !dev.multi) switch (ev.code) {
                     ABS_X => {
-                        if (abs_have_x[index]) acc_x += @floatFromInt(ev.value - abs_x[index]);
-                        abs_x[index] = ev.value;
-                        abs_have_x[index] = true;
+                        if (dev.have_x) acc_x += @floatFromInt(ev.value - dev.x);
+                        dev.x = ev.value;
+                        dev.have_x = true;
                     },
                     ABS_Y => {
-                        if (abs_have_y[index]) acc_y += @floatFromInt(ev.value - abs_y[index]);
-                        abs_y[index] = ev.value;
-                        abs_have_y[index] = true;
+                        if (dev.have_y) acc_y += @floatFromInt(ev.value - dev.y);
+                        dev.y = ev.value;
+                        dev.have_y = true;
                     },
                     else => {},
                 },
@@ -334,12 +346,10 @@ pub fn onMotion(index: usize) bool {
                 // the pad, or the emulation snapping to a different contact —
                 // isn't counted as travel between the two.
                 EV_KEY => if (ev.code == BTN_TOUCH and ev.value == 0) {
-                    abs_have_x[index] = false;
-                    abs_have_y[index] = false;
+                    dev.forgetOrigin();
                 } else if (isMultiTool(ev.code)) {
-                    multi[index] = ev.value != 0;
-                    abs_have_x[index] = false;
-                    abs_have_y[index] = false;
+                    dev.multi = ev.value != 0;
+                    dev.forgetOrigin();
                 },
                 EV_SYN => moved = true,
                 else => {},
@@ -428,7 +438,7 @@ fn isShaking(now: u64) bool {
 /// cycle — nothing here changes the cursor any more, so always false.
 pub fn onTimer() bool {
     var buf: [8]u8 = undefined;
-    _ = C.read(timer_fd.?, &buf, buf.len);
+    _ = std.c.read(timer_fd.?, &buf, buf.len);
 
     const sh = config.cursor.shake;
     const now = nowUs();
@@ -464,12 +474,8 @@ pub fn onTimer() bool {
     // Fully settled: stop ticking and forget the history so the next shake
     // starts from a clean window.
     if (!qualifying and shake_us == 0) {
-        fired = false;
         armTimer(false);
-        last_tick_us = 0;
-        head = 0;
-        count = 0;
-        path_sum = 0;
+        resetGesture();
     }
 
     return false;
@@ -483,5 +489,4 @@ pub fn applyPending() void {
     const seat = ctx.primary_seat orelse return; // no seat yet; retry next cycle
     pending_size = null;
     seat.rwm.setXcursorTheme(config.cursor.theme.ptr, size);
-    sent_size = size;
 }

@@ -2,8 +2,8 @@
 // the compiled-in defaults in config.zig.
 //
 // WHY a file at all: reach is dwl-style (config in code), but to ship as a real
-// package the per-user, per-machine bits (monitors, env, window rules, keybinds,
-// status blocks) must NOT be baked into the ELF — `/home/<you>/…` paths and your
+// package the per-user, per-machine bits (monitors, env, window rules, keybinds)
+// must NOT be baked into the ELF — `/home/<you>/…` paths and your
 // monitor layout don't belong in a distro binary. So at startup we look for a
 // `config.zon` and overlay whatever it sets on top of config.zig's defaults. No
 // file → defaults are used verbatim (the binary works out of the box).
@@ -11,7 +11,7 @@
 // RELOAD: the file is re-read on demand (SIGHUP, or a `reload` keybind) — see
 // reload.zig for the ordering. Each load parses into its OWN arena; the previous
 // arena is freed only once every subsystem has rebound to the new one, because
-// config slices (rules, blocks, spawn strings, monitors) borrow straight from the
+// config slices (rules, spawn strings, monitors) borrow straight from the
 // parsed AST. Reload is IDEMPOTENT: `defaults` is snapshotted before the first
 // overlay, and re-applied ahead of every later one, so deleting a field from
 // config.zon reverts it to the compiled-in value instead of stranding the old
@@ -27,7 +27,7 @@
 //           .{ .name = "DP-1", .w = 2560, .h = 1440, .x = 0, .y = 0 },
 //       },
 //       .binds = .{
-//           .{ .mods = .{ .mod4 = true }, .keysym = "Return", .action = .{ .spawn = "kitty" } },
+//           .{ .key = "Super+Return", .action = .{ .spawn = "kitty" } },
 //       },
 //   }
 //
@@ -66,19 +66,17 @@
 const std = @import("std");
 const log = std.log.scoped(.config);
 
+const action = @import("action.zig");
 const config = @import("config.zig");
 
 // libc file IO + getenv. This Zig's std.posix is gutted (no open/getenv), and the
-// rest of the codebase already calls libc directly (popen in status.zig, setenv in
-// main.zig), so we do the same here rather than fight std.fs.
+// rest of the codebase already calls libc directly (setenv in main.zig, sockets
+// in ipc.zig), so we do the same here rather than fight std.fs. std.c covers
+// everything but fseek/ftell.
+const c = std.c;
 const C = struct {
-    const FILE = opaque {};
-    extern fn fopen(path: [*:0]const u8, mode: [*:0]const u8) ?*FILE;
-    extern fn fread(ptr: [*]u8, size: usize, nmemb: usize, stream: *FILE) usize;
-    extern fn fclose(stream: *FILE) c_int;
-    extern fn fseek(stream: *FILE, off: c_long, whence: c_int) c_int;
-    extern fn ftell(stream: *FILE) c_long;
-    extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
+    extern fn fseek(stream: *c.FILE, off: c_long, whence: c_int) c_int;
+    extern fn ftell(stream: *c.FILE) c_long;
     const SEEK_SET: c_int = 0;
     const SEEK_END: c_int = 2;
 };
@@ -87,31 +85,6 @@ const C = struct {
 // The file schema. Every field is optional (null = "not set, keep the default").
 // These mirror config.zig's types so std.zon parses straight into them.
 // ---------------------------------------------------------------------------
-
-/// A pixel delta for floating move/resize actions.
-pub const DeltaSpec = struct { x: i32 = 0, y: i32 = 0 };
-
-/// What a bind does. Mirrors action.Action; chords are expressed structurally via
-/// KeySpec.chord and remain an implementation detail of binding.zig.
-pub const ActionSpec = union(enum) {
-    view: u32,
-    send: u32,
-    spawn: [:0]const u8,
-    quit,
-    killclient,
-    zoom,
-    togglefloating,
-    togglefullscreen,
-    move: DeltaSpec,
-    resize: DeltaSpec,
-    focusstack: i32,
-    setmfact: f32,
-    incnmaster: i32,
-    focusmon: i32,
-    sendmon: i32,
-    brightness: i32,
-    reload,
-};
 
 /// One keybinding. `key` is a combo string: zero or more modifiers and the xkb
 /// keysym NAME, joined by '+' — e.g. "Super+Shift+q", "Alt+Up", "XF86AudioPlay".
@@ -122,9 +95,12 @@ pub const ActionSpec = union(enum) {
 /// xkb_keysym_from_name (binding.zig). A leaf bind sets `action`; a chord leader
 /// leaves `action` null and lists its sub-keys in `chord`, which nests to any
 /// depth (dwl-style multi-key chords).
+///
+/// `action` is the real action.Action: the file names the same verbs the WM
+/// executes, so there is no parallel schema to keep in step with it.
 pub const KeySpec = struct {
     key: []const u8,
-    action: ?ActionSpec = null,
+    action: ?action.Action = null,
     chord: []const KeySpec = &.{},
 };
 
@@ -243,8 +219,8 @@ pub const Staged = struct {
     arena: *std.heap.ArenaAllocator,
 };
 
-/// Locate, read and apply the config file. Call once at startup, before the seat,
-/// bar and outputs are configured (so the overlaid values are the ones used). On
+/// Locate, read and apply the config file. Call once at startup, before the seat
+/// and outputs are configured (so the overlaid values are the ones used). On
 /// any problem (no file, parse error) the compiled defaults are left in place and
 /// reach keeps running — a bad config never bricks the session.
 pub fn load(gpa: std.mem.Allocator) void {
@@ -341,8 +317,8 @@ pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
     // didn't mention this" is encoded), but null is precisely the reset value
     // here — it means "fall back to the compiled-in keymap".
     binds = null;
-    if (defaults_taken) overlay(defaults);
-    overlay(staged.fc);
+    overlay(config, defaults);
+    overlay(config, staged.fc);
     // monitors.zon LAST, so the dedicated file wins over a `.monitors` block left
     // behind in config.zon rather than racing it.
     //
@@ -366,44 +342,111 @@ pub fn release(gpa: std.mem.Allocator, old: ?*std.heap.ArenaAllocator) void {
 }
 
 /// Capture config.zig's compiled-in values into `defaults` (once, on the first
-/// commit, before anything overlays them). Field names in the *Spec structs mirror config.zig's namespaces
-/// exactly, so the flat scalars copy across by reflection; the nested tables and
-/// `binds` (which has no config.zig counterpart) are the handful of exceptions.
+/// commit, before anything overlays them).
 fn snapshotDefaults() void {
     if (defaults_taken) return;
     defaults_taken = true;
     defaults = mirror(FileConfig, config);
-    defaults.cursor = mirror(CursorSpec, config.cursor);
-    defaults.cursor.?.shake = mirror(ShakeSpec, config.cursor.shake);
-    defaults.gamma = mirror(GammaSpec, config.gamma);
-    // `binds` is not a config.zig variable: null means "use the compiled-in
-    // keymap", which is exactly the right reset value.
-    defaults.binds = null;
+}
+
+// ---------------------------------------------------------------------------
+// Schema <-> config.zig, by reflection
+// ---------------------------------------------------------------------------
+//
+// Every *Spec field names a like-named declaration in the matching config.zig
+// namespace: a value (`inner_gap`, `cursor.size`) or, for a nested *Spec table, a
+// nested namespace (`cursor`, `cursor.shake`, `gamma`). Walking that
+// correspondence generically is what makes a new setting a two-edit change —
+// config.zig and the schema — with no copy list to forget. A schema field with no
+// counterpart, or a mismatched type, is a COMPILE error rather than a setting
+// that silently never applies; `unmirrored` names the deliberate exceptions.
+
+/// Schema fields with no config.zig declaration. `binds` is owned by this file
+/// (see `binds` above), and its null default is exactly its reset value.
+fn unmirrored(comptime name: []const u8) bool {
+    return std.mem.eql(u8, name, "binds");
+}
+
+/// Whether `ns.name` is a nested namespace (a `pub const x = struct {...}`)
+/// rather than a value.
+fn isNamespace(comptime ns: type, comptime name: []const u8) bool {
+    return @TypeOf(@field(ns, name)) == type;
 }
 
 /// Build an all-fields-populated `Spec` from the like-named declarations of the
-/// namespace `src`. Fields with no counterpart in `src` (or whose counterpart is a
-/// nested namespace rather than a value) are left null for the caller to fill.
-fn mirror(comptime Spec: type, comptime src: anytype) Spec {
+/// namespace `ns`, recursing into nested tables. Used once, to snapshot the
+/// compiled-in defaults, so `overlay(config, defaults)` is a full reset.
+fn mirror(comptime Spec: type, comptime ns: type) Spec {
     var out: Spec = .{};
     inline for (@typeInfo(Spec).@"struct".fields) |f| {
+        if (comptime unmirrored(f.name)) continue;
         const Child = @typeInfo(f.type).optional.child;
-        if (@hasDecl(src, f.name) and @TypeOf(@field(src, f.name)) == Child) {
-            @field(out, f.name) = @field(src, f.name);
-        }
+        @field(out, f.name) = if (comptime isNamespace(ns, f.name))
+            mirror(Child, @field(ns, f.name))
+        else
+            @field(ns, f.name);
     }
     return out;
 }
 
-/// First existing candidate path, written into `buf`. Returns null if none exist.
+/// Copy every field `spec` sets over the like-named declaration in `ns`,
+/// recursing into nested tables. Null means "the file didn't mention this", so
+/// it is skipped. The top-level `binds` goes to this file's own `binds`.
+fn overlay(comptime ns: type, spec: anytype) void {
+    inline for (@typeInfo(@TypeOf(spec)).@"struct".fields) |f| {
+        if (@field(spec, f.name)) |v| {
+            if (comptime unmirrored(f.name)) {
+                binds = v;
+            } else if (comptime isNamespace(ns, f.name)) {
+                overlay(@field(ns, f.name), v);
+            } else {
+                @field(ns, f.name) = v;
+            }
+        }
+    }
+}
+
+test "defaults snapshot covers every setting" {
+    // A field left null here would never be reset on reload: deleting it from
+    // config.zon would strand the previous override.
+    const d = mirror(FileConfig, config);
+    inline for (@typeInfo(FileConfig).@"struct".fields) |f| {
+        if (comptime unmirrored(f.name)) continue;
+        try std.testing.expect(@field(d, f.name) != null);
+    }
+    try std.testing.expect(d.cursor.?.shake.?.delay != null);
+    try std.testing.expect(d.gamma.?.temperature != null);
+}
+
+test "overlay applies set fields, nested ones included, and skips the rest" {
+    const saved = mirror(FileConfig, config);
+    const saved_binds = binds;
+    defer {
+        overlay(config, saved);
+        binds = saved_binds;
+    }
+
+    const outer = config.outer_gap;
+    const temperature = config.gamma.temperature;
+    overlay(config, FileConfig{
+        .inner_gap = 7,
+        .cursor = .{ .size = 48, .shake = .{ .delay = 9 } },
+    });
+    try std.testing.expectEqual(@as(i32, 7), config.inner_gap);
+    try std.testing.expectEqual(@as(u32, 48), config.cursor.size);
+    try std.testing.expectEqual(@as(u32, 9), config.cursor.shake.delay);
+    try std.testing.expectEqual(outer, config.outer_gap);
+    try std.testing.expectEqual(temperature, config.gamma.temperature);
+}
+
 /// First existing candidate path, written into `buf`. Returns null if none exist.
 fn locate(buf: []u8, comptime rel: []const u8, comptime system: []const u8) ?[:0]const u8 {
-    if (C.getenv("XDG_CONFIG_HOME")) |x| {
+    if (c.getenv("XDG_CONFIG_HOME")) |x| {
         if (std.mem.span(x).len != 0) {
             if (candidate(buf, &.{ std.mem.span(x), rel })) |p| return p;
         }
     }
-    if (C.getenv("HOME")) |h| {
+    if (c.getenv("HOME")) |h| {
         if (candidate(buf, &.{ std.mem.span(h), "/.config" ++ rel })) |p| return p;
     }
     if (candidate(buf, &.{system})) |p| return p;
@@ -420,16 +463,16 @@ fn candidate(buf: []u8, parts: []const []const u8) ?[:0]const u8 {
     }
     buf[n] = 0;
     const path = buf[0..n :0];
-    const f = C.fopen(path.ptr, "rb") orelse return null;
-    _ = C.fclose(f);
+    const f = c.fopen(path.ptr, "rb") orelse return null;
+    _ = c.fclose(f);
     return path;
 }
 
 /// Read an entire file into a freshly allocated, null-terminated buffer (the shape
 /// std.zon.parse wants).
 fn readFileZ(gpa: std.mem.Allocator, path: [:0]const u8) ![:0]const u8 {
-    const f = C.fopen(path.ptr, "rb") orelse return error.OpenFailed;
-    defer _ = C.fclose(f);
+    const f = c.fopen(path.ptr, "rb") orelse return error.OpenFailed;
+    defer _ = c.fclose(f);
 
     if (C.fseek(f, 0, C.SEEK_END) != 0) return error.SeekFailed;
     const len = C.ftell(f);
@@ -439,42 +482,7 @@ fn readFileZ(gpa: std.mem.Allocator, path: [:0]const u8) ![:0]const u8 {
     const size: usize = @intCast(len);
     const buf = try gpa.allocSentinel(u8, size, 0);
     errdefer gpa.free(buf);
-    const got = C.fread(buf.ptr, 1, size, f);
+    const got = c.fread(buf.ptr, 1, size, f);
     if (got != size) return error.ShortRead;
     return buf;
-}
-
-/// Copy every field the file set over the corresponding config.zig default.
-fn overlay(fc: FileConfig) void {
-    if (fc.outer_gap) |v| config.outer_gap = v;
-    if (fc.inner_gap) |v| config.inner_gap = v;
-    if (fc.sloppy_focus) |v| config.sloppy_focus = v;
-    if (fc.repeat_rate) |v| config.repeat_rate = v;
-    if (fc.repeat_delay) |v| config.repeat_delay = v;
-    if (fc.nmaster) |v| config.nmaster = v;
-    if (fc.mfact) |v| config.mfact = v;
-    if (fc.float_default_frac_w) |v| config.float_default_frac_w = v;
-    if (fc.float_default_frac_h) |v| config.float_default_frac_h = v;
-    if (fc.float_step) |v| config.float_step = v;
-    if (fc.border_active) |v| config.border_active = v;
-    if (fc.border_inactive) |v| config.border_inactive = v;
-    if (fc.border_thickness) |v| config.border_thickness = v;
-    if (fc.env) |v| config.env = v;
-    if (fc.autostart) |v| config.autostart = v;
-    if (fc.monitors) |v| config.monitors = v;
-    if (fc.rules) |v| config.rules = v;
-    if (fc.binds) |v| binds = v;
-    if (fc.cursor) |c| {
-        if (c.theme) |v| config.cursor.theme = v;
-        if (c.size) |v| config.cursor.size = v;
-        if (c.export_env) |v| config.cursor.export_env = v;
-        if (c.shake) |s| {
-            if (s.enabled) |v| config.cursor.shake.enabled = v;
-            if (s.delay) |v| config.cursor.shake.delay = v;
-            if (s.command) |v| config.cursor.shake.command = v;
-        }
-    }
-    if (fc.gamma) |g| {
-        if (g.temperature) |v| config.gamma.temperature = v;
-    }
 }

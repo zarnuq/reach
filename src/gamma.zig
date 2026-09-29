@@ -29,17 +29,6 @@ const zwlr = wayland.client.zwlr;
 const config = @import("config.zig");
 const Context = @import("context.zig");
 
-// libc for the memfd the protocol wants. Same reason the rest of the codebase
-// calls libc directly (ipc.zig's sockets, confparse.zig's file IO): this Zig's
-// std.posix doesn't wrap all of it, and we link libc regardless.
-const C = struct {
-    extern fn memfd_create(name: [*:0]const u8, flags: c_uint) c_int;
-    extern fn write(fd: c_int, buf: [*]const u8, len: usize) isize;
-    extern fn lseek(fd: c_int, off: c_long, whence: c_int) c_long;
-    extern fn close(fd: c_int) c_int;
-    const SEEK_SET: c_int = 0;
-};
-
 /// Largest ramp we will write. Hardware is 256 or 1024 entries; the cap is what
 /// keeps this allocation-free on a fixed buffer.
 const max_ramp = 4096;
@@ -182,7 +171,8 @@ fn apply(self: *Control) void {
     );
 
     const bytes = std.mem.sliceAsBytes(ramp[0 .. size * 3]);
-    const fd = C.memfd_create("reach-gamma", 0);
+    // libc's memfd: this Zig's std.posix doesn't wrap it, and we link libc anyway.
+    const fd = std.c.memfd_create("reach-gamma", 0);
     if (fd < 0) {
         log.warn("memfd_create failed; brightness not applied", .{});
         return;
@@ -190,15 +180,15 @@ fn apply(self: *Control) void {
     // Closing ours is correct and not a double close: libwayland dups the fd
     // while marshalling the request (wl_closure_marshal), so what it later sends
     // and closes is its own copy.
-    defer _ = C.close(fd);
+    defer _ = std.c.close(fd);
 
-    if (C.write(fd, bytes.ptr, bytes.len) != @as(isize, @intCast(bytes.len))) {
+    if (std.c.write(fd, bytes.ptr, bytes.len) != @as(isize, @intCast(bytes.len))) {
         log.warn("short write to the gamma table; not applied", .{});
         return;
     }
     // The compositor reads the table from the start of the file, and our write
     // left the offset at the end.
-    _ = C.lseek(fd, 0, C.SEEK_SET);
+    _ = std.c.lseek(fd, 0, std.c.SEEK.SET);
 
     self.control.setGamma(fd);
 }

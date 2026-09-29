@@ -5,6 +5,8 @@
 // registered against the seat here via binding.registerForSeat; the events we
 // don't act on are ignored.
 
+const std = @import("std");
+
 const wayland = @import("wayland");
 const river = wayland.client.river;
 
@@ -32,19 +34,14 @@ pub const Seat = struct {
         switch (event) {
             // Pointer moved onto a window. Always track its output (spawn target);
             // with sloppy focus, also focus the window and select its monitor so
-            // the bar highlight and desktop keys follow the mouse.
+            // a panel's highlight and the desktop keys follow the mouse.
             .pointer_enter => |ev| {
-                for (ctx.windows.items) |w| {
-                    if (w.rwm == ev.window) {
-                        ctx.pointer_output = w.output;
-                        if (config.sloppy_focus and ctx.focused != w) {
-                            ctx.focused = w;
-                            ctx.current_output = w.output;
-                            // Focus is applied in the manage cycle; ask for one.
-                            ctx.rwm.manageDirty();
-                        }
-                        break;
-                    }
+                const w = query.windowFor(ev.window) orelse return;
+                ctx.pointer_output = w.output;
+                if (config.sloppy_focus and ctx.focused != w) {
+                    ctx.focus(w);
+                    // Focus is applied in the manage cycle; ask for one.
+                    ctx.rwm.manageDirty();
                 }
             },
             .pointer_leave => {},
@@ -53,7 +50,7 @@ pub const Seat = struct {
             //
             // `pointer_enter` above only fires for a window, so an output with
             // nothing under the cursor — bare desktop, or a monitor whose desktop
-            // is empty — never became the selection. The bar then highlighted the
+            // is empty — never became the selection. A panel then highlighted the
             // monitor you last touched a window on, and the desktop keys acted on
             // it, which is the half that actually bites: `Super+2` switched the
             // wrong screen while the mouse sat on this one.
@@ -61,7 +58,7 @@ pub const Seat = struct {
             // river sends this only inside a manage sequence (motion alone must
             // not start one), so it is as often as any window manager can know.
             // That makes the selection correct at the moment it is USED — a
-            // keybind is a manage sequence — while the bar's highlight catches up
+            // keybind is a manage sequence — while a panel's highlight catches up
             // on the same beat rather than live under a motionless session.
             .pointer_position => |ev| {
                 const out = query.outputAt(ev.x, ev.y) orelse return;
@@ -73,26 +70,15 @@ pub const Seat = struct {
                 if (config.sloppy_focus) ctx.current_output = out;
             },
 
-            // Click-to-focus and pointer tracking
+            // Click-to-focus. Clicking a window also selects its monitor (selmon).
             .window_interaction => |ev| {
-                for (ctx.windows.items) |w| {
-                    if (w.rwm == ev.window) {
-                        ctx.focused = w;
-                        ctx.pointer_output = w.output;
-                        // Clicking a window also selects its monitor (selmon).
-                        ctx.current_output = w.output;
-                        break;
-                    }
-                }
+                const w = query.windowFor(ev.window) orelse return;
+                ctx.pointer_output = w.output;
+                ctx.focus(w);
             },
 
             .removed => {
-                for (ctx.seats.items, 0..) |s, i| {
-                    if (s == self) {
-                        _ = ctx.seats.orderedRemove(i);
-                        break;
-                    }
-                }
+                if (std.mem.indexOfScalar(*Seat, ctx.seats.items, self)) |i| _ = ctx.seats.orderedRemove(i);
                 if (ctx.primary_seat == self) {
                     ctx.primary_seat = if (ctx.seats.items.len > 0) ctx.seats.items[0] else null;
                 }

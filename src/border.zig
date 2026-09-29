@@ -15,10 +15,10 @@
 // gap of at least `border_thickness` keeps the line entirely in the gutter. The
 // line is drawn at full length *along the windows it separates* — broken wherever
 // the gutter crosses a gap, so a gap band is never crossed by a lone stub — and
-// cut collinearly — the stretch
-// running alongside the focused window is `border_active`, the remainder of the
-// same line is `border_inactive`. That split is the DIRECTION cue: the active
-// stretch shows you where the focus is along the shared edge.
+// cut collinearly — the stretch running alongside the focused window is
+// `border_active`, the remainder of the same line is `border_inactive`. That
+// split is the DIRECTION cue: the active stretch shows you where the focus is
+// along the shared edge.
 //
 // dwl's half-line-at-junction rule survives in the two-pane cases, where the cut
 // lands exactly at the midpoint — half active, half inactive.
@@ -60,16 +60,26 @@ pub const BorderSurface = struct {
         const shell = try ctx.rwm.getShellSurface(surface);
         errdefer shell.destroy();
         const node = try shell.getNode();
+        errdefer node.destroy();
 
         const self = try ctx.gpa.create(BorderSurface);
         self.* = .{ .surface = surface, .viewport = viewport, .shell = shell, .node = node };
         return self;
     }
 
+    /// Release every protocol object and the allocation — the reverse of `create`.
+    fn destroy(self: *BorderSurface) void {
+        self.node.destroy();
+        self.shell.destroy();
+        self.viewport.destroy();
+        self.surface.destroy();
+        Context.get().gpa.destroy(self);
+    }
+
     /// Show this border at global (gx, gy) with size (w, h) in `color` (0xRRGGBB).
-    /// Must be called inside a render sequence. Does NOT place the node — `update`
-    /// stacks every visible border in one pass afterwards, anchored to the window
-    /// they decorate.
+    /// Must be called inside a render sequence. Does NOT place the node — `raise`
+    /// stacks every visible border in one pass afterwards, at the layer
+    /// stack.apply() picks.
     fn show(self: *BorderSurface, gx: i32, gy: i32, w: i32, h: i32, color: u32) void {
         const ctx = Context.get();
         if (w <= 0 or h <= 0) {
@@ -122,8 +132,8 @@ pub fn update() void {
     // Only the focused window is decorated. Its inactive twins go down first so
     // the active line wins if a narrow gutter makes the two overlap.
     if (focusedLines()) |l| {
-        used = draw(l.inactive[0..l.n_inactive], l.out_x, l.out_y, config.border_inactive, used);
-        used = draw(l.active[0..l.n_active], l.out_x, l.out_y, config.border_active, used);
+        used = draw(l.inactive.items(), l.out_x, l.out_y, config.border_inactive, used);
+        used = draw(l.active.items(), l.out_x, l.out_y, config.border_active, used);
     }
 
     // Hide any pooled surfaces we didn't use this frame.
@@ -165,55 +175,56 @@ fn draw(rects: []const Rect, out_x: i32, out_y: i32, color: u32, used: usize) us
     return n;
 }
 
+/// A capped run of rectangles. Empty rectangles are dropped rather than stored —
+/// a focused window flush against the end of a seam leaves no remainder on that
+/// side — and so is anything past the cap.
+fn Rects(comptime cap: usize) type {
+    return struct {
+        buf: [cap]Rect = undefined,
+        len: usize = 0,
+
+        fn add(self: *@This(), r: Rect) void {
+            if (r.w <= 0 or r.h <= 0) return;
+            if (self.len == cap) return;
+            self.buf[self.len] = r;
+            self.len += 1;
+        }
+
+        fn items(self: *const @This()) []const Rect {
+            return self.buf[0..self.len];
+        }
+    };
+}
+
 /// The lines to draw this frame, split by colour. There is ONE line per shared
 /// face — the tmux single-divider look, laid just outside the focused window's own
 /// edge so it never covers it, at any `inner_gap` — drawn full length along the
-/// windows it separates, broken at the gaps, and cut
-/// collinearly: the
-/// stretch running alongside the focused window is `active`, the rest of that same
-/// line is `inactive`. Nothing is drawn on any face the focused window doesn't
-/// touch.
+/// windows it separates, broken at the gaps, and cut collinearly: the stretch
+/// running alongside the focused window is `active`, the rest of that same line is
+/// `inactive`. Nothing is drawn on any face the focused window doesn't touch.
 const Lines = struct {
     // The divider is emitted one segment per facing pair of windows, so the counts
     // are data-driven rather than fixed: cap them and drop the overflow. Only the
     // focused window's own row can be active, so `active` stays tiny.
-    active: [4]Rect = undefined,
-    n_active: usize = 0,
-    inactive: [32]Rect = undefined,
-    n_inactive: usize = 0,
+    active: Rects(4) = .{},
+    inactive: Rects(32) = .{},
     out_x: i32 = 0,
     out_y: i32 = 0,
-
-    /// Empty rectangles are dropped rather than stored: a focused window flush
-    /// against the end of a seam leaves no remainder on that side.
-    fn addActive(self: *Lines, r: Rect) void {
-        if (r.w <= 0 or r.h <= 0) return;
-        if (self.n_active == self.active.len) return;
-        self.active[self.n_active] = r;
-        self.n_active += 1;
-    }
-
-    fn addInactive(self: *Lines, r: Rect) void {
-        if (r.w <= 0 or r.h <= 0) return;
-        if (self.n_inactive == self.inactive.len) return;
-        self.inactive[self.n_inactive] = r;
-        self.n_inactive += 1;
-    }
 
     /// A vertical seam at `x`, spanning [y0, y1), whose [ay0, ay1) stretch is the
     /// active one. The two leftovers either side become the inactive halves.
     fn vline(self: *Lines, x: i32, t: i32, y0: i32, y1: i32, ay0: i32, ay1: i32) void {
-        self.addActive(.{ .x = x, .y = ay0, .w = t, .h = ay1 - ay0 });
-        self.addInactive(.{ .x = x, .y = y0, .w = t, .h = ay0 - y0 });
-        self.addInactive(.{ .x = x, .y = ay1, .w = t, .h = y1 - ay1 });
+        self.active.add(.{ .x = x, .y = ay0, .w = t, .h = ay1 - ay0 });
+        self.inactive.add(.{ .x = x, .y = y0, .w = t, .h = ay0 - y0 });
+        self.inactive.add(.{ .x = x, .y = ay1, .w = t, .h = y1 - ay1 });
     }
 
     /// A horizontal seam at `y`, spanning [x0, x1), whose [ax0, ax1) stretch is
     /// the active one.
     fn hline(self: *Lines, y: i32, t: i32, x0: i32, x1: i32, ax0: i32, ax1: i32) void {
-        self.addActive(.{ .x = ax0, .y = y, .w = ax1 - ax0, .h = t });
-        self.addInactive(.{ .x = x0, .y = y, .w = ax0 - x0, .h = t });
-        self.addInactive(.{ .x = ax1, .y = y, .w = x1 - ax1, .h = t });
+        self.active.add(.{ .x = ax0, .y = y, .w = ax1 - ax0, .h = t });
+        self.inactive.add(.{ .x = x0, .y = y, .w = ax0 - x0, .h = t });
+        self.inactive.add(.{ .x = ax1, .y = y, .w = x1 - ax1, .h = t });
     }
 };
 
@@ -239,10 +250,10 @@ fn focusedLines() ?Lines {
         const w = f.width;
         const h = f.height;
         if (w <= 0 or h <= 0) return null;
-        l.addActive(.{ .x = f.x, .y = f.y, .w = w, .h = t }); // top
-        l.addActive(.{ .x = f.x, .y = f.y + h - t, .w = w, .h = t }); // bottom
-        l.addActive(.{ .x = f.x, .y = f.y, .w = t, .h = h }); // left
-        l.addActive(.{ .x = f.x + w - t, .y = f.y, .w = t, .h = h }); // right
+        l.active.add(.{ .x = f.x, .y = f.y, .w = w, .h = t }); // top
+        l.active.add(.{ .x = f.x, .y = f.y + h - t, .w = w, .h = t }); // bottom
+        l.active.add(.{ .x = f.x, .y = f.y, .w = t, .h = h }); // left
+        l.active.add(.{ .x = f.x + w - t, .y = f.y, .w = t, .h = h }); // right
         return l;
     }
 
@@ -328,7 +339,7 @@ fn focusedLines() ?Lines {
 
         if (has_divider) {
             const x = if (in_master) f.x + f.width else f.x - t;
-            l.addActive(.{ .x = x, .y = f.y, .w = t, .h = f.height });
+            l.active.add(.{ .x = x, .y = f.y, .w = t, .h = f.height });
             var idx: i32 = 0;
             for (ctx.windows.items) |w| {
                 if (!query.tiledOn(w, out)) continue;
@@ -336,7 +347,7 @@ fn focusedLines() ?Lines {
                 idx += 1;
                 if (w == f) continue;
                 if (col_master != in_master) continue; // focused window's column only
-                l.addInactive(.{ .x = x, .y = w.y, .w = t, .h = w.height });
+                l.inactive.add(.{ .x = x, .y = w.y, .w = t, .h = w.height });
             }
         }
         // Horizontal seams span exactly the focused window's own column, so the
@@ -351,15 +362,15 @@ fn focusedLines() ?Lines {
         // Seam ABOVE, only when the focused window has a neighbour above it in its
         // own column.
         if ((cidx > 0 and cidx < nmaster) or (cidx > nmaster)) {
-            l.addActive(.{ .x = hx0, .y = f.y - t, .w = hx1 - hx0, .h = t });
+            l.active.add(.{ .x = hx0, .y = f.y - t, .w = hx1 - hx0, .h = t });
         }
         // Seam BELOW, same reasoning.
         if ((cidx < nmaster - 1) or (cidx >= nmaster and cidx < total - 1)) {
-            l.addActive(.{ .x = hx0, .y = f.y + f.height, .w = hx1 - hx0, .h = t });
+            l.active.add(.{ .x = hx0, .y = f.y + f.height, .w = hx1 - hx0, .h = t });
         }
     }
 
-    if (l.n_active == 0 and l.n_inactive == 0) return null;
+    if (l.active.len == 0 and l.inactive.len == 0) return null;
     return l;
 }
 
@@ -372,7 +383,7 @@ fn ensure(i: usize) ?*BorderSurface {
             return null;
         };
         ctx.borders.append(ctx.gpa, bs) catch {
-            bs.surface.destroy();
+            bs.destroy();
             return null;
         };
     }

@@ -11,12 +11,13 @@
 // event is always followed by a manage_start, so an action mutating state is
 // enough — the layout/render re-runs automatically (no manageDirty needed).
 //
-// The full dwl keybind set is wired up in registerForSeat (mirroring the user's
-// config.h). The desktop binds are:
+// Two sources feed registerForSeat. The desktop binds are always generated:
 //   MOD+1..9            view desktop n
 //   MOD+Shift+1..9      send the focused window to desktop n
-// where MOD is Super (mod4); the rest (spawn, focus, layout, chords, media, …)
-// follow in the same function.
+// where MOD is Super (mod4). Everything else comes from config.zon's `binds`, or
+// — when the file sets none — from `default_binds` below. Both are the same
+// KeySpec shape and go through the same `register`, so the compiled-in keymap
+// cannot handle a key string differently from a file that spells it the same way.
 //
 // There is deliberately no toggle-view / toggle-desktop pair and no "all
 // desktops" bind: an output views exactly one desktop and a window lives on
@@ -39,10 +40,10 @@ const Seat = @import("seat.zig").Seat;
 const action = @import("action.zig");
 
 /// Resolve an xkb keysym NAME ("Return", "q", "XF86AudioPlay", "1") to its keysym
-/// code, for binds loaded from config.zon. Case-sensitive (XKB_KEYSYM_NO_FLAGS),
-/// matching xkbcommon's own naming: "Return" not "return", lowercase "q" for the Q
-/// key (Shift binds register the BASE keysym + MOD_SHIFT — see the no_translate
-/// note in registerForSeat). Returns null for an unknown name.
+/// code. Case-sensitive (XKB_KEYSYM_NO_FLAGS), matching xkbcommon's own naming:
+/// "Return" not "return", lowercase "q" for the Q key (Shift binds register the
+/// BASE keysym + Shift — see the no_translate note in registerForSeat). Returns
+/// null for an unknown name.
 extern fn xkb_keysym_from_name(name: [*:0]const u8, flags: u32) u32;
 fn resolveKeysym(name: []const u8) ?u32 {
     var buf: [64]u8 = undefined;
@@ -54,25 +55,11 @@ fn resolveKeysym(name: []const u8) ?u32 {
 }
 
 /// MOD is Super/logo (mod4), matching dwl's `#define MOD WLR_MODIFIER_LOGO`.
+/// Only the generated desktop binds use these directly; everything else spells
+/// its modifiers in a key string.
 const Mods = river.SeatV1.Modifiers;
 const MOD = Mods{ .mod4 = true };
 const MOD_SHIFT = Mods{ .mod4 = true, .shift = true };
-const MOD_ALT = Mods{ .mod1 = true };
-
-/// xkbcommon keysyms - Latin-1 chars are direct codepoints, others from xkbcommon.h
-const XKB_KEY_Tab = 0xff09;
-const XKB_KEY_Return = 0xff0d;
-const XKB_KEY_BackSpace = 0xff08;
-const XKB_KEY_space = 0x0020;
-const XKB_KEY_Up = 0xff52;
-const XKB_KEY_Down = 0xff54;
-const XKB_KEY_Left = 0xff51;
-const XKB_KEY_Right = 0xff53;
-const XKB_KEY_XF86AudioPlay = 0x1008ff14;
-const XKB_KEY_XF86AudioPrev = 0x1008ff16;
-const XKB_KEY_XF86AudioNext = 0x1008ff17;
-
-const digit_keysym = [9]u32{ '1', '2', '3', '4', '5', '6', '7', '8', '9' };
 
 /// What a key press does at the binding layer. Chord transitions deliberately
 /// live here instead of in action.Action: entering a submap is keyboard plumbing,
@@ -86,30 +73,23 @@ const Target = union(enum) {
 pub const Binding = struct {
     rwm: *river.XkbBindingV1,
     target: Target,
+    /// A chord's sub-key rather than a top-level bind. A terminal sub-key closes
+    /// the chord after its action runs; one that descends (`.submap`) transitions
+    /// instead, keeping us inside the chord — which is what makes chords of any
+    /// depth work (dwl's `keys[5]`), not just two keys.
+    in_chord: bool,
 
-    /// Listener for top-level bindings (always-enabled).
     fn listener(_: *river.XkbBindingV1, event: river.XkbBindingV1.Event, self: *Binding) void {
         switch (event) {
             .pressed => switch (self.target) {
-                .action => |act| action.execute(act),
                 .submap => |chord| requestSubmapEnter(chord),
-            },
-            else => {},
-        }
-    }
-
-    /// Listener for a chord's sub-binding. A terminal key runs its action and
-    /// closes the chord; a key that descends into a deeper submap
-    /// (`.submap`) transitions instead of closing — `applySubmap` swaps the active
-    /// node, keeping us inside the chord. This is what makes chords of any depth
-    /// work (dwl's `keys[5]`), not just two keys.
-    fn subListener(_: *river.XkbBindingV1, event: river.XkbBindingV1.Event, self: *Binding) void {
-        switch (event) {
-            .pressed => switch (self.target) {
-                .submap => |child| requestSubmapEnter(child),
                 .action => |act| {
+                    // Read before executing, so nothing touches `self` once the
+                    // action has run: one that tore bindings down synchronously
+                    // would otherwise make this a use-after-free.
+                    const in_chord = self.in_chord;
                     action.execute(act);
-                    requestSubmapExit();
+                    if (in_chord) requestSubmapExit();
                 },
             },
             else => {},
@@ -126,10 +106,10 @@ const Chord = struct {
     subs: std.ArrayList(*Binding) = .empty,
 };
 
-// Bindings are created when a seat appears, but can only be enabled inside a
-// manage sequence — so we stash them and flip `pending_enable`, which the manage
-// cycle drains via `enablePending`. (Chord sub-bindings are NOT in this list;
-// they're enabled/disabled on the fly by `applySubmap`.)
+// Top-level bindings are created when a seat appears, but can only be enabled
+// inside a manage sequence — so we stash them here, and the manage cycle drains
+// the not-yet-enabled tail via `enablePending`. (Chord sub-bindings are NOT in
+// this list; their node owns them and `applySubmap` enables/disables them.)
 var list: std.ArrayList(*Binding) = .empty;
 var enable_from: usize = 0; // index of first not-yet-enabled binding
 
@@ -141,6 +121,47 @@ var bindings_seat: ?*river.XkbBindingsSeatV1 = null;
 var active_chord: ?*Chord = null; // submap currently armed, if any
 var pending_enter: ?*Chord = null; // submap to arm in the next manage cycle
 var pending_exit: bool = false; // close the active submap in the next manage cycle
+
+/// The compiled-in fallback keymap, used only when config.zon supplies no `binds`.
+/// Deliberately MINIMAL and generic — a terminal plus core window management, with
+/// no references to specific apps — so a bare install (or zero-config run from the
+/// repo) is usable out of the box. The full personal keymap lives in
+/// `config.example.zon`, not here. Desktop binds are generated separately in
+/// registerForSeat and are always present.
+const default_binds = [_]confparse.KeySpec{
+    // Terminal: dwl's Super+Shift+Return. Respect $TERMINAL, fall back to foot (a
+    // light Wayland-native terminal); harmless no-op if neither is installed.
+    .{ .key = "Super+Shift+Return", .action = .{ .spawn = "${TERMINAL:-foot}" } },
+
+    // Window management
+    .{ .key = "Super+Shift+r", .action = .reload },
+    .{ .key = "Super+Shift+p", .action = .quit },
+    .{ .key = "Super+Shift+q", .action = .killclient },
+    .{ .key = "Super+Return", .action = .zoom },
+    .{ .key = "Super+f", .action = .togglefloating },
+    .{ .key = "Super+Shift+f", .action = .togglefullscreen },
+
+    // Focus / layout
+    .{ .key = "Super+j", .action = .{ .focusstack = 1 } },
+    .{ .key = "Super+k", .action = .{ .focusstack = -1 } },
+    .{ .key = "Super+h", .action = .{ .setmfact = -0.05 } },
+    .{ .key = "Super+l", .action = .{ .setmfact = 0.05 } },
+    .{ .key = "Super+m", .action = .{ .incnmaster = -1 } },
+    .{ .key = "Super+n", .action = .{ .incnmaster = 1 } },
+    .{ .key = "Super+comma", .action = .{ .focusmon = -1 } },
+    .{ .key = "Super+period", .action = .{ .focusmon = 1 } },
+    .{ .key = "Super+Shift+comma", .action = .{ .sendmon = -1 } },
+    .{ .key = "Super+Shift+period", .action = .{ .sendmon = 1 } },
+};
+
+test "every default bind names a real key" {
+    for (default_binds) |spec| {
+        if (parseKey(spec.key) == null) {
+            std.debug.print("default bind '{s}' does not parse\n", .{spec.key});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
 
 /// Create every configured binding for `seat`. No-op if the compositor didn't
 /// advertise river_xkb_bindings_v1.
@@ -162,62 +183,47 @@ pub fn registerForSeat(seat: *Seat) void {
         }
     }
 
-    // Desktop management. Desktop numbers are 1-based, so key '1' (digit_keysym[0])
-    // is desktop 1 — the index and the number differ by exactly this `+ 1`.
-    var i: usize = 0;
+    // Desktop management. Desktop numbers are 1-based, so key '1' is desktop 1.
+    var i: u32 = 0;
     while (i < config.desktops.count and i < 9) : (i += 1) {
-        const d: u32 = @intCast(i + 1);
-        add(xkb, seat, digit_keysym[i], MOD, .{ .view = d });
+        const d = i + 1;
+        const digit: u32 = '1' + i;
+        _ = add(xkb, seat, null, .{ .keysym = digit, .mods = MOD }, .{ .action = .{ .view = d } });
         // NOTE: river matches Shift bindings in `no_translate` mode using the
         // BASE-level keysym (e.g. '1', not '!') while KEEPING Shift in the mod
         // mask. So Shift bindings must register the unshifted keysym + MOD_SHIFT,
         // never the shifted glyph. (See Seat.matchXkbBinding / XkbBinding.match.)
-        add(xkb, seat, digit_keysym[i], MOD_SHIFT, .{ .send = d });
+        _ = add(xkb, seat, null, .{ .keysym = digit, .mods = MOD_SHIFT }, .{ .action = .{ .send = d } });
     }
 
-    // The action/spawn/chord binds: if config.zon supplied a `binds` array it FULLY
-    // replaces the compiled-in keymap (dwl-style — your config is the config); the
-    // desktop binds above are always generated. With no file binds, the built-in
-    // defaults below are used verbatim.
-    if (confparse.binds) |specs| {
-        for (specs) |spec| registerSpecBind(xkb, seat, spec);
-    } else {
-        registerDefaultBinds(xkb, seat);
-    }
+    // The action/spawn/chord binds: a `binds` array in config.zon FULLY replaces
+    // the compiled-in keymap (dwl-style — your config is the config).
+    for (confparse.binds orelse &default_binds) |spec| register(xkb, seat, null, spec);
 }
 
-/// Register one file-driven bind (and, recursively, its chord sub-tree).
-fn registerSpecBind(xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeySpec) void {
+/// Register one bind — a leaf, or a chord and (recursively) its sub-tree — under
+/// `parent` (null = top level).
+fn register(xkb: *river.XkbBindingsV1, seat: *Seat, parent: ?*Chord, spec: confparse.KeySpec) void {
     const kc = parseKey(spec.key) orelse return; // parseKey logs the reason
     if (spec.chord.len != 0) {
-        const chord = addChord(xkb, seat, kc.keysym, kc.mods) orelse return;
-        for (spec.chord) |sub| registerSpecSub(chord, xkb, seat, sub);
+        const child = newChord() orelse return;
+        if (!add(xkb, seat, parent, kc, .{ .submap = child })) return;
+        for (spec.chord) |sub| register(xkb, seat, child, sub);
     } else if (spec.action) |a| {
-        add(xkb, seat, kc.keysym, kc.mods, action.toAction(a));
+        _ = add(xkb, seat, parent, kc, .{ .action = a });
     } else {
         log.warn("bind '{s}': neither action nor chord — skipped", .{spec.key});
-    }
-}
-
-/// Register a sub-key of a chord from its spec (recurses for nested chords).
-fn registerSpecSub(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, spec: confparse.KeySpec) void {
-    const kc = parseKey(spec.key) orelse return;
-    if (spec.chord.len != 0) {
-        const child = addSubChord(chord, xkb, seat, kc.keysym, kc.mods) orelse return;
-        for (spec.chord) |sub| registerSpecSub(child, xkb, seat, sub);
-    } else if (spec.action) |a| {
-        _ = addSub(chord, xkb, seat, kc.keysym, kc.mods, .{ .action = action.toAction(a) });
     }
 }
 
 /// A parsed key combo: the river modifier mask plus the resolved keysym code.
 const KeyCombo = struct { mods: Mods, keysym: u32 };
 
-/// Parse a config.zon `key` string ("Super+Shift+q", "Alt+Up", "XF86AudioPlay",
-/// "d") into modifiers + keysym. Tokens are split on '+'; the LAST token is the
-/// xkb keysym name, the rest are modifiers. Whitespace around tokens is ignored.
-/// Returns null (and logs) on an unknown modifier or keysym — note '+' as the key
-/// itself must be written by name ("plus"), since '+' is the separator.
+/// Parse a key string ("Super+Shift+q", "Alt+Up", "XF86AudioPlay", "d") into
+/// modifiers + keysym. Tokens are split on '+'; the LAST token is the xkb keysym
+/// name, the rest are modifiers. Whitespace around tokens is ignored. Returns null
+/// (and logs) on an unknown modifier or keysym — note '+' as the key itself must
+/// be written by name ("plus"), since '+' is the separator.
 fn parseKey(spec: []const u8) ?KeyCombo {
     const s = std.mem.trim(u8, spec, " \t");
     if (s.len == 0) {
@@ -283,38 +289,6 @@ test "unknown modifier is rejected" {
     try std.testing.expect(parseKey("Hyper+q") == null);
 }
 
-/// The compiled-in fallback keymap, used only when config.zon supplies no `binds`.
-/// Deliberately MINIMAL and generic — a terminal plus core window management, with
-/// no references to specific apps — so a bare install (or zero-config run from the
-/// repo) is usable out of the box. The full personal keymap lives in
-/// `config.example.zon`, not here. Desktop binds are generated separately in
-/// registerForSeat and are always present.
-fn registerDefaultBinds(xkb: *river.XkbBindingsV1, seat: *Seat) void {
-    // Terminal: dwl's Super+Shift+Return. Respect $TERMINAL, fall back to foot (a
-    // light Wayland-native terminal); harmless no-op if neither is installed.
-    add(xkb, seat, XKB_KEY_Return, MOD_SHIFT, .{ .spawn = "${TERMINAL:-foot}" });
-
-    // Window management
-    add(xkb, seat, 'r', MOD_SHIFT, .reload);
-    add(xkb, seat, 'p', MOD_SHIFT, .quit);
-    add(xkb, seat, 'q', MOD_SHIFT, .killclient);
-    add(xkb, seat, XKB_KEY_Return, MOD, .zoom);
-    add(xkb, seat, 'f', MOD, .togglefloating);
-    add(xkb, seat, 'f', MOD_SHIFT, .togglefullscreen);
-
-    // Focus / layout
-    add(xkb, seat, 'j', MOD, .{ .focusstack = 1 });
-    add(xkb, seat, 'k', MOD, .{ .focusstack = -1 });
-    add(xkb, seat, 'h', MOD, .{ .setmfact = -0.05 });
-    add(xkb, seat, 'l', MOD, .{ .setmfact = 0.05 });
-    add(xkb, seat, 'm', MOD, .{ .incnmaster = -1 });
-    add(xkb, seat, 'n', MOD, .{ .incnmaster = 1 });
-    add(xkb, seat, ',', MOD, .{ .focusmon = -1 });
-    add(xkb, seat, '.', MOD, .{ .focusmon = 1 });
-    add(xkb, seat, ',', MOD_SHIFT, .{ .sendmon = -1 });
-    add(xkb, seat, '.', MOD_SHIFT, .{ .sendmon = 1 });
-}
-
 /// Destroy every binding and chord, returning the module to its pre-registration
 /// state so `reregister` can rebuild from a freshly parsed config. MUST run inside
 /// a manage sequence (disable() is manage-only) and MUST run before the config
@@ -336,18 +310,14 @@ pub fn teardown() void {
     pending_enter = null;
     pending_exit = false;
 
-    for (list.items) |b| {
-        destroyBinding(b);
-    }
+    for (list.items) |b| destroyBinding(b);
     list.clearRetainingCapacity();
     enable_from = 0;
 
     // Chord subs are not in `list` (they are owned by their node), so they are
     // destroyed here, node by node.
     for (chords.items) |c| {
-        for (c.subs.items) |b| {
-            destroyBinding(b);
-        }
+        for (c.subs.items) |b| destroyBinding(b);
         c.subs.deinit(ctx.gpa);
         ctx.gpa.destroy(c);
     }
@@ -361,23 +331,31 @@ pub fn reregister() void {
     for (Context.get().seats.items) |seat| registerForSeat(seat);
 }
 
-/// Enable any newly-created bindings. Must be called from a manage sequence.
+/// Enable any newly-created top-level bindings. Must be called from a manage
+/// sequence.
 pub fn enablePending() void {
     if (enable_from >= list.items.len) return;
     for (list.items[enable_from..]) |b| b.rwm.enable();
     enable_from = list.items.len;
 }
 
-fn add(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, act: action.Action) void {
-    _ = addTopLevel(xkb, seat, keysym, mods, .{ .action = act });
-}
-
-/// Create and retain a top-level binding. It starts disabled and is enabled by
-/// enablePending() during the next manage sequence.
-fn addTopLevel(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, target: Target) bool {
+/// Create and retain one binding on `kc`. With no `parent` it is a top-level bind:
+/// kept in `list` and enabled by the next `enablePending`. Under a chord it is
+/// owned by that node and stays DISABLED — never in `list`, never `enable()`d
+/// here — so it can only fire while `applySubmap` has that node's submap open.
+fn add(xkb: *river.XkbBindingsV1, seat: *Seat, parent: ?*Chord, kc: KeyCombo, target: Target) bool {
     const ctx = Context.get();
-    const b = createBinding(xkb, seat, keysym, mods, target) orelse return false;
-    list.append(ctx.gpa, b) catch {
+    const rwm = xkb.getXkbBinding(seat.rwm, kc.keysym, kc.mods) catch |err| {
+        log.err("getXkbBinding failed: {}", .{err});
+        return false;
+    };
+    const b = ctx.gpa.create(Binding) catch {
+        rwm.destroy();
+        return false;
+    };
+    b.* = .{ .rwm = rwm, .target = target, .in_chord = parent != null };
+    const owner = if (parent) |c| &c.subs else &list;
+    owner.append(ctx.gpa, b) catch {
         destroyBinding(b);
         return false;
     };
@@ -385,11 +363,16 @@ fn addTopLevel(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, 
     return true;
 }
 
+fn destroyBinding(b: *Binding) void {
+    b.rwm.destroy();
+    Context.get().gpa.destroy(b);
+}
+
 // ---------------------------------------------------------------------------
-// Chords (two-key submaps)
+// Chords (multi-key submaps)
 // ---------------------------------------------------------------------------
 
-/// Allocate and retain a chord node.
+/// Allocate and retain a chord node; `teardown` frees it.
 fn newChord() ?*Chord {
     const ctx = Context.get();
     const chord = ctx.gpa.create(Chord) catch return null;
@@ -401,68 +384,10 @@ fn newChord() ?*Chord {
     return chord;
 }
 
-/// Create a top-level chord leader: a normal, always-enabled binding on
-/// (keysym, mods) whose action arms the returned (initially empty) root submap.
-/// Add keys to it with `addSub` (terminal) or `addSubChord` (deeper level).
-fn addChord(xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods) ?*Chord {
-    const chord = newChord() orelse return null;
-    if (!addTopLevel(xkb, seat, keysym, mods, .{ .submap = chord })) return null;
-    return chord;
-}
-
-/// Add a key to `chord` whose action runs the next-level submap, returning that
-/// child node so you can keep adding to it. This is how chords go past two keys.
-fn addSubChord(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods) ?*Chord {
-    const child = newChord() orelse return null;
-    if (!addSub(chord, xkb, seat, keysym, mods, .{ .submap = child })) return null;
-    return child;
-}
-
-/// Add a key to a chord node. The binding is created DISABLED (never put in
-/// `list`, never `enable()`d here); `applySubmap` toggles it as the node's submap
-/// opens and closes, so it can't trigger except while that node is active.
-fn addSub(chord: *Chord, xkb: *river.XkbBindingsV1, seat: *Seat, keysym: u32, mods: Mods, target: Target) bool {
-    const ctx = Context.get();
-    const b = createBinding(xkb, seat, keysym, mods, target) orelse return false;
-    chord.subs.append(ctx.gpa, b) catch {
-        destroyBinding(b);
-        return false;
-    };
-    b.rwm.setListener(*Binding, Binding.subListener, b);
-    return true;
-}
-
-/// Allocate one binding and its protocol object. The caller owns the result and
-/// must either retain it in `list`/a chord or destroy it with destroyBinding().
-fn createBinding(
-    xkb: *river.XkbBindingsV1,
-    seat: *Seat,
-    keysym: u32,
-    mods: Mods,
-    target: Target,
-) ?*Binding {
-    const ctx = Context.get();
-    const rwm = xkb.getXkbBinding(seat.rwm, keysym, mods) catch |err| {
-        log.err("getXkbBinding failed: {}", .{err});
-        return null;
-    };
-    const b = ctx.gpa.create(Binding) catch {
-        rwm.destroy();
-        return null;
-    };
-    b.* = .{ .rwm = rwm, .target = target };
-    return b;
-}
-
-fn destroyBinding(b: *Binding) void {
-    b.rwm.destroy();
-    Context.get().gpa.destroy(b);
-}
-
 /// Ask to arm `chord`'s submap on the next manage cycle. Called from a leader's
 /// `pressed` handler — which the protocol guarantees is followed by a manage
 /// sequence, so no manageDirty is needed.
-pub fn requestSubmapEnter(chord: *Chord) void {
+fn requestSubmapEnter(chord: *Chord) void {
     pending_enter = chord;
 }
 

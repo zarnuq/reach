@@ -14,32 +14,25 @@ const wayland = @import("wayland");
 const wl = wayland.client.wl;
 const river = wayland.client.river;
 const wp = wayland.client.wp;
-const zwlr = wayland.client.zwlr;
 
 const Window = @import("window.zig").Window;
 const Output = @import("output.zig").Output;
 const Seat = @import("seat.zig").Seat;
 const BorderSurface = @import("border.zig").BorderSurface;
 
-/// Every global reach binds from the registry, gathered in one place (see
+/// The registry globals the window-manager core keeps using after startup (see
 /// main.zig's registryListener). `rwm` is the only hard requirement; the rest are
 /// optional because a minimal compositor could lack them (and we degrade: no
-/// no viewporter/single-pixel-buffer → no borders, etc.).
-/// Passed as a single value into `init`, replacing what used to be a dozen
-/// positional parameters threaded through wm.init → Context.init.
+/// viewporter/single-pixel-buffer → no borders, etc.). The sibling protocols
+/// (output/input management, gamma) go straight from main.zig to their own
+/// modules and never reach the Context.
 pub const Globals = struct {
     rwm: *river.WindowManagerV1,
     xkb_bindings: ?*river.XkbBindingsV1 = null,
     layer_shell: ?*river.LayerShellV1 = null,
     wl_compositor: ?*wl.Compositor = null,
-    wl_subcompositor: ?*wl.Subcompositor = null,
     wp_viewporter: ?*wp.Viewporter = null,
     wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
-    // Sibling protocols applied once at startup (outputconfig/inputconfig) and not
-    // needed afterwards, so they live here but aren't copied onto the Context.
-    output_manager: ?*zwlr.OutputManagerV1 = null,
-    input_manager: ?*river.InputManagerV1 = null,
-    gamma_manager: ?*zwlr.GammaControlManagerV1 = null,
 };
 
 pub const Context = struct {
@@ -57,7 +50,6 @@ pub const Context = struct {
     xkb_bindings: ?*river.XkbBindingsV1,
     layer_shell: ?*river.LayerShellV1,
     wl_compositor: ?*wl.Compositor,
-    wl_subcompositor: ?*wl.Subcompositor,
     wp_viewporter: ?*wp.Viewporter,
     wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1,
 
@@ -80,10 +72,11 @@ pub const Context = struct {
     pointer_output: ?*Output = null, // output the pointer is over (spawn target)
 
     // The selected output — dwl's `selmon`. This is the single source of truth
-    // for "which monitor is active": tag/layout keybindings act on it and the bar
-    // draws its highlight there. Updated on click-to-focus, new windows, and
-    // `focusmon`. Kept distinct from `pointer_output` so keyboard-driven focus and
-    // mouse position can differ without the two disagreeing about the target.
+    // for "which monitor is active": desktop/layout keybindings act on it and the
+    // state socket reports it as the focused output. Updated on click-to-focus,
+    // new windows, and `focusmon`. Kept distinct from `pointer_output` so
+    // keyboard-driven focus and mouse position can differ without the two
+    // disagreeing about the target.
     current_output: ?*Output = null,
 
     // The output we last told river is the default for new layer surfaces (rofi,
@@ -99,6 +92,14 @@ pub const Context = struct {
     warp_pending: bool = false,
 
     running: bool = true,
+
+    /// Give `w` keyboard focus and select its monitor, so the desktop keys and the
+    /// state socket follow the window you are in. A window not yet homed to an
+    /// output leaves the selection where it was.
+    pub fn focus(self: *Context, w: *Window) void {
+        self.focused = w;
+        if (w.output) |o| self.current_output = o;
+    }
 };
 
 // The one and only instance. Populated by `init` before the event loop starts.
@@ -117,7 +118,6 @@ pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, g: Globals) void {
         .xkb_bindings = g.xkb_bindings,
         .layer_shell = g.layer_shell,
         .wl_compositor = g.wl_compositor,
-        .wl_subcompositor = g.wl_subcompositor,
         .wp_viewporter = g.wp_viewporter,
         .wp_single_pixel_buffer_manager = g.wp_single_pixel_buffer_manager,
         .windows = .empty,

@@ -36,20 +36,9 @@ const Context = @import("context.zig");
 const gamma = @import("gamma.zig");
 const query = @import("query.zig");
 
-// libc socket calls. Zig 0.16's std.posix no longer wraps the socket API, and we
-// link libc anyway — same approach shake.zig takes for its evdev handles. The
-// constants and `sockaddr.un` still come from std.os.linux.
-const C = struct {
-    extern fn socket(domain: c_int, sock_type: c_int, protocol: c_int) c_int;
-    extern fn bind(fd: c_int, addr: *const linux.sockaddr.un, len: c_uint) c_int;
-    extern fn listen(fd: c_int, backlog: c_int) c_int;
-    extern fn accept4(fd: c_int, addr: ?*anyopaque, len: ?*c_uint, flags: c_int) c_int;
-    extern fn send(fd: c_int, buf: [*]const u8, len: usize, flags: c_int) isize;
-    extern fn read(fd: c_int, buf: [*]u8, len: usize) isize;
-    extern fn close(fd: c_int) c_int;
-    extern fn unlink(path: [*:0]const u8) c_int;
-    extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;
-};
+// Sockets go through libc (std.c): Zig 0.16's std.posix no longer wraps the
+// socket API, and we link libc anyway. The constants and `sockaddr.un` come from
+// std.os.linux.
 
 /// Concurrent listeners. A bar per session is the case; the ceiling exists so a
 /// client stuck in a reconnect loop can't exhaust our fds.
@@ -83,9 +72,9 @@ pub fn start() void {
 
     // A previous run's socket file outlives the process and would make bind()
     // fail with EADDRINUSE. Nothing else owns this name, so removing it is safe.
-    _ = C.unlink(path.ptr);
+    _ = std.c.unlink(path.ptr);
 
-    const fd = C.socket(
+    const fd = std.c.socket(
         linux.AF.UNIX,
         linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC,
         0,
@@ -99,14 +88,14 @@ pub fn start() void {
     @memset(&addr.path, 0);
     @memcpy(addr.path[0..path.len], path);
 
-    if (C.bind(fd, &addr, @sizeOf(linux.sockaddr.un)) < 0) {
+    if (std.c.bind(fd, @ptrCast(&addr), @sizeOf(linux.sockaddr.un)) < 0) {
         log.warn("bind {s} failed — ipc disabled", .{path});
-        _ = C.close(fd);
+        _ = std.c.close(fd);
         return;
     }
-    if (C.listen(fd, max_clients) < 0) {
+    if (std.c.listen(fd, max_clients) < 0) {
         log.warn("listen failed — ipc disabled", .{});
-        _ = C.close(fd);
+        _ = std.c.close(fd);
         return;
     }
 
@@ -116,13 +105,13 @@ pub fn start() void {
 
 /// Close the socket and remove its file, so the next run's bind() doesn't have to.
 pub fn stop() void {
-    for (client_fds[0..client_count]) |fd| _ = C.close(fd);
+    for (client_fds[0..client_count]) |fd| _ = std.c.close(fd);
     client_count = 0;
     const fd = listen_fd orelse return;
-    _ = C.close(fd);
+    _ = std.c.close(fd);
     listen_fd = null;
     var path_buf: [108]u8 = undefined;
-    if (socketPath(&path_buf)) |path| _ = C.unlink(path.ptr);
+    if (socketPath(&path_buf)) |path| _ = std.c.unlink(path.ptr);
 }
 
 /// The listening socket is readable: take every pending connection. Each new
@@ -133,11 +122,11 @@ pub fn onAccept() void {
     while (true) {
         // EAGAIN once the backlog is drained; any other failure is equally a
         // reason to stop taking connections this pass.
-        const client = C.accept4(fd, null, null, linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC);
+        const client = std.c.accept4(fd, null, null, linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC);
         if (client < 0) return;
         if (client_count == max_clients) {
             log.warn("ipc client limit reached; refusing connection", .{});
-            _ = C.close(client);
+            _ = std.c.close(client);
             continue;
         }
         client_fds[client_count] = client;
@@ -153,7 +142,7 @@ pub fn onAccept() void {
 /// "closed" (read of 0) or a client talking to itself (discarded).
 pub fn onClient(i: usize) void {
     var buf: [256]u8 = undefined;
-    const n = C.read(client_fds[i], &buf, buf.len);
+    const n = std.c.read(client_fds[i], &buf, buf.len);
     // 0 = the peer closed. Negative is EAGAIN (a spurious wakeup, keep it) or a
     // real error (drop it); either way the next publish would reap a dead fd.
     if (n == 0) drop(i);
@@ -177,7 +166,7 @@ pub fn publish() void {
 /// Forget client `i`, closing its fd. Order among clients doesn't matter, but
 /// the array has to stay dense for the poll loop, so the last one fills the hole.
 fn drop(i: usize) void {
-    _ = C.close(client_fds[i]);
+    _ = std.c.close(client_fds[i]);
     client_count -= 1;
     client_fds[i] = client_fds[client_count];
 }
@@ -187,14 +176,14 @@ fn drop(i: usize) void {
 /// as a lost client: the next snapshot supersedes this one anyway, and a partial
 /// line would corrupt the client's parse.
 fn sendTo(fd: i32, bytes: []const u8) bool {
-    const n = C.send(fd, bytes.ptr, bytes.len, linux.MSG.NOSIGNAL);
+    const n = std.c.send(fd, bytes.ptr, bytes.len, linux.MSG.NOSIGNAL);
     return n == @as(isize, @intCast(bytes.len));
 }
 
 /// $XDG_RUNTIME_DIR/reach.sock, or /tmp/reach.sock without one. NUL-terminated:
 /// it is passed to bind() and unlink() as a C string.
 fn socketPath(buf: []u8) ?[:0]const u8 {
-    const dir = if (C.getenv("XDG_RUNTIME_DIR")) |d| std.mem.span(d) else "/tmp";
+    const dir = if (std.c.getenv("XDG_RUNTIME_DIR")) |d| std.mem.span(d) else "/tmp";
     return std.fmt.bufPrintZ(buf, "{s}/reach.sock", .{dir}) catch null;
 }
 
@@ -229,9 +218,8 @@ fn compose() bool {
         });
 
         // Which desktops hold a window on this output — the bar's occupied dots.
-        // Same rule as renderDesktops(): any managed window homed here counts,
-        // mapped or not, so a rule that opens an app on an unviewed desktop
-        // lights its cell up.
+        // Any managed window homed here counts, mapped or not, so a rule that
+        // opens an app on an unviewed desktop lights its cell up.
         var occupied = [_]bool{false} ** config.desktops.count;
         for (ctx.windows.items) |w| {
             if (w.output == o and w.desktop >= 1 and w.desktop <= config.desktops.count) {

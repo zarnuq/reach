@@ -3,12 +3,16 @@
 // dwl-style values live here, but most are now `pub var` rather than `pub const`:
 // they hold the compiled-in DEFAULT, and `confparse.zig` overlays any field the
 // user set in `config.zon` (see confparse.load, called once at startup before the
-// seat/bar/outputs are configured). With no config file, these defaults are used
+// seat and outputs are configured). With no config file, these defaults are used
 // verbatim — so the binary works out of the box and nothing user-specific is baked
 // into the ELF (important for packaging). Desktops and the type definitions below stay
 // `const`: the desktop count feeds comptime sizing and the types are, well, types.
-// Keybindings live in binding.zig; their defaults are likewise overridable via the
-// `binds` array in config.zon.
+// The default keymap lives in binding.zig; config.zon's `binds` array replaces it.
+//
+// Every overridable `pub var` here has a like-named optional field in
+// confparse.FileConfig (nested namespaces ↔ nested *Spec tables). confparse walks
+// that correspondence by reflection, so a new setting is those two edits and
+// nothing else — a mismatch is a compile error, not a setting that never applies.
 
 /// Gap (px) between the tiled area and the output edge. 0 = windows extend all
 /// the way to the screen edge (dwl/tmux style — no outer border).
@@ -21,7 +25,7 @@ pub var outer_gap: i32 = 0;
 pub var inner_gap: i32 = 2;
 
 /// Focus follows the mouse (dwl's `sloppyfocus`): moving the pointer onto a
-/// window focuses it and selects its monitor — so the bar highlight and desktop keys
+/// window focuses it and selects its monitor — so the selected monitor and desktop keys
 /// track the monitor the mouse is over. false = focus changes only on click.
 pub var sloppy_focus: bool = true;
 
@@ -182,8 +186,8 @@ pub var float_step: i32 = 40;
 // Window rules (dwl `rules[]`)
 // ---------------------------------------------------------------------------
 //
-// When a window's app_id (or title) becomes known, the first... actually ALL
-// matching rules are applied (dwl accumulates). A rule can force the window
+// When a window's app_id (or title) becomes known, ALL matching rules are
+// applied in order (dwl accumulates). A rule can force the window
 // floating, move it to a desktop, switch the output to view that desktop, send it to
 // a specific monitor, and give a floating geometry as fractions of the output.
 //
@@ -260,10 +264,9 @@ pub const gamma = struct {
 // `window.desktop == output.desktop`.
 //
 // Desktop numbers are 1-BASED throughout — in the config, in the keybinds, and
-// internally — so `.desktop = 3` is the desktop you reach with MOD+3 and the one
-// the bar labels "3". 0 is never a valid desktop; it is the "unset" sentinel for
-// `Rule.desktop`. The only place the offset shows up is indexing `names`, which
-// is `names[desktop - 1]`.
+// internally, and on the state socket — so `.desktop = 3` is the desktop you
+// reach with MOD+3. 0 is never a valid desktop; it is the "unset" sentinel for
+// `Rule.desktop`.
 //
 // This replaces the dwm/dwl bitmask tag model. A window can no longer be in two
 // places at once, and an output can no longer view two desktops at once — which
@@ -273,7 +276,4 @@ pub const gamma = struct {
 pub const desktops = struct {
     /// Number of desktops. Bound above by 9, since the binds are MOD+1..9.
     pub const count = 9;
-
-    /// Labels shown in the bar. `names[d - 1]` is the label for desktop `d`.
-    pub const names = [_][]const u8{ "1", "2", "3", "4", "5", "6", "7", "8", "9" };
 };

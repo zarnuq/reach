@@ -187,9 +187,11 @@ keybindings.
 Two of those are re-applied only when they actually changed, because redoing
 them is not free: the `monitors` table (re-setting a mode is a visible flicker)
 and the `cursor` block (which reopens the `/dev/input` handles behind
-shake-to-find). Everything else — colors, gaps, `mfact`/`nmaster`, border
-thickness, window rules — needs no action at all, since the manage/render cycle
-the reload runs inside reads each one fresh.
+shake-to-find). `mfact`/`nmaster` are per-monitor state that the keybinds
+adjust, so a reload pushes them onto every monitor only when the file's value
+changed — an unrelated edit leaves your hand-tuned split alone. Everything else —
+colors, gaps, border thickness, window rules — needs no action at all, since the
+manage/render cycle the reload runs inside reads each one fresh.
 
 Two settings are startup-only, because they cannot be anything else:
 

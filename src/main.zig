@@ -13,7 +13,7 @@
 //   manager fused into one binary), river is only the compositor. The window
 //   manager is a separate client process — this one — that speaks the
 //   `river-window-management-v1` protocol. river renders, handles input, talks to
-//   the GPU/DRM; we decide layout, focus, borders, and the bar.
+//   the GPU/DRM; we decide layout, focus and borders.
 
 const std = @import("std");
 const log = std.log.scoped(.main);
@@ -52,7 +52,6 @@ const min_xkb_bindings_version = 2; // river_xkb_bindings_v1.get_seat (chords)
 /// confirms it is present.
 const RegistryGlobals = struct {
     wl_compositor: ?*wl.Compositor = null,
-    wl_subcompositor: ?*wl.Subcompositor = null,
     wp_viewporter: ?*wp.Viewporter = null,
     wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
     rwm: ?*river.WindowManagerV1 = null,
@@ -84,7 +83,7 @@ pub fn main() !void {
 
     // Load the optional runtime config (config.zon) and overlay it onto the
     // compiled-in defaults BEFORE anything reads them — env, monitors, rules,
-    // binds, bar and blocks are all consumed from here on. No file → defaults
+    // binds and cursor settings are all consumed from here on. No file → defaults
     // stand; a bad file → defaults stand and we log why (never bricks the session).
     confparse.load(gpa);
 
@@ -123,7 +122,7 @@ pub fn main() !void {
     };
 
     // Warn (but continue) on the soft dependencies; reach degrades gracefully
-    // without them (no bar, no borders, no keybindings, as noted per-global).
+    // without them (no borders, no keybindings, as noted per-global).
     if (globals.layer_shell == null) log.warn("no river_layer_shell_v1 (panels cannot be given a default output)", .{});
     if (globals.xkb_bindings == null) log.warn("no river_xkb_bindings_v1 (needed later for keybinds)", .{});
     if (globals.wp_viewporter == null) log.warn("no wp_viewporter (borders disabled)", .{});
@@ -138,7 +137,6 @@ pub fn main() !void {
         .xkb_bindings = globals.xkb_bindings,
         .layer_shell = globals.layer_shell,
         .wl_compositor = globals.wl_compositor,
-        .wl_subcompositor = globals.wl_subcompositor,
         .wp_viewporter = globals.wp_viewporter,
         .wp_single_pixel_buffer_manager = globals.wp_single_pixel_buffer_manager,
     });
@@ -198,8 +196,6 @@ fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *
             // compare zig-wayland expects here.
             if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
                 globals.wl_compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, wl.Subcompositor.interface.name) == .eq) {
-                globals.wl_subcompositor = registry.bind(g.name, wl.Subcompositor, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, wp.Viewporter.interface.name) == .eq) {
                 globals.wp_viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
             } else if (std.mem.orderZ(u8, g.interface, wp.SinglePixelBufferManagerV1.interface.name) == .eq) {

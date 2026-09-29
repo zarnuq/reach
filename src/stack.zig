@@ -5,9 +5,9 @@
 // implicit: per the protocol, "the initial position of a node in the render list
 // is undefined", so whatever is not placed is wherever it happens to land.
 //
-// This used to be spread across window.zig, border.zig and bar.zig, each calling
-// place_top on its own during the render cycle. The resulting order was whatever
-// the *call order across those files* produced — which is how a focused tiled
+// This used to be spread across window.zig, border.zig and the since-removed
+// built-in bar.zig, each calling place_top on its own during the render cycle.
+// The resulting order was whatever the *call order across those files* produced — which is how a focused tiled
 // window's border ended up painted over a floating window that was stacked above
 // it. Anything with an opinion about layering states it here instead, and the
 // render cycle calls `apply()` once after everything has been drawn.
@@ -20,7 +20,7 @@
 //   4. floating-focus ring — above the focused float so its inset outline is seen.
 //   5. fullscreen windows  — own the output outright, floats and borders included.
 //
-// The bar is not in this list: it is an ordinary layer surface belonging to
+// A panel is not in this list: it is an ordinary layer surface belonging to
 // another client, and the compositor stacks layer surfaces above everything the
 // window manager places.
 
@@ -44,8 +44,8 @@ pub fn apply() void {
     // leave the newest window at the bottom.
     //
     // Windows are re-placed every cycle rather than only when the order changes.
-    // These are a handful of small wire messages against a render cycle that
-    // already rasterizes the bar; tracking dirtiness would cost more than it saves.
+    // These are a handful of small wire messages per render cycle; tracking
+    // dirtiness would cost more than it saves.
     raiseEach(.tiled);
 
     // A tiled border must clear every tiled node. This matters when inner_gap is
@@ -66,7 +66,6 @@ pub fn apply() void {
     for (ctx.windows.items) |w| {
         if (w.visible() and w.fullscreen) w.node.placeTop();
     }
-
 }
 
 const Layer = enum { tiled, floating };
