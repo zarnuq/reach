@@ -58,6 +58,13 @@ pub const Window = struct {
     height: i32 = 0,
     mapped: bool = false,
 
+    // Content size the client actually committed, from river's `dimensions` event
+    // (0 = not reported yet). A client can refuse the size we propose — one whose
+    // min_width is wider than its tile commits the min anyway and spills over its
+    // neighbour — so this can disagree with width/height above. See drawnWidth.
+    actual_width: i32 = 0,
+    actual_height: i32 = 0,
+
     // Fullscreen state. `fullscreen` is what we want; `fs_applied` is what we've
     // already told river, so manage() only issues the request on a real change.
     // While fullscreen, river owns the window's size/position and stacks it above
@@ -89,10 +96,6 @@ pub const Window = struct {
     // calls. null = never sent.
     tiled_applied: ?bool = null,
 
-    // Last clip box size we sent in render() (0x0 = clipping disabled), so render()
-    // can avoid redundant set_clip_box calls. null = never sent.
-    clip_applied: ?struct { w: i32, h: i32 } = null,
-
     // River window-management v5 reports active capture sessions per window.
     // Retain the count so UI/IPC can expose it without another protocol change.
     capture_sessions: u32 = 0,
@@ -116,6 +119,18 @@ pub const Window = struct {
     pub fn visible(self: *Window) bool {
         const o = self.output orelse return false;
         return self.mapped and self.desktop == o.desktop;
+    }
+
+    /// The width the window really covers: its tile, or more if the client
+    /// committed something wider. Never less — a client that stops short of its
+    /// tile (a terminal snapping to its cell grid) still owns the whole tile.
+    pub fn drawnWidth(self: *const Window) i32 {
+        return @max(self.width, self.actual_width);
+    }
+
+    /// Height counterpart of drawnWidth.
+    pub fn drawnHeight(self: *const Window) i32 {
+        return @max(self.height, self.actual_height);
     }
 
     /// Recompute float state from the current hints. A window floats if it is a
@@ -293,18 +308,6 @@ pub const Window = struct {
         }
         const out = self.output.?;
         self.node.setPosition(out.x + self.x, out.y + self.y);
-
-        // A tiled window may ignore the size we proposed and commit something
-        // bigger — a client with a min_width wider than its tile (satty) draws
-        // straight over its neighbour. Clip it to the tile it was given. Floating
-        // windows pick their own size, so they stay unclipped (0x0 disables it).
-        const clip_w: i32 = if (self.floating) 0 else self.width;
-        const clip_h: i32 = if (self.floating) 0 else self.height;
-        if (self.clip_applied == null or self.clip_applied.?.w != clip_w or self.clip_applied.?.h != clip_h) {
-            self.rwm.setClipBox(0, 0, clip_w, clip_h);
-            self.clip_applied = .{ .w = clip_w, .h = clip_h };
-        }
-
         self.rwm.show();
     }
 
@@ -318,6 +321,13 @@ pub const Window = struct {
                 self.max_width = ev.max_width;
                 self.max_height = ev.max_height;
                 self.recomputeFloating();
+            },
+
+            // The size the client actually committed (sent before render_start, so
+            // border.update() sees it in the same render cycle).
+            .dimensions => |ev| {
+                self.actual_width = ev.width;
+                self.actual_height = ev.height;
             },
 
             // A parent makes this a transient (dialog/menu) → float.
@@ -405,7 +415,7 @@ pub const Window = struct {
 
             .capture_sessions => |ev| self.capture_sessions = ev.count,
 
-            // dimensions (actual size), decoration_hint, maximize requests,
+            // decoration_hint, maximize requests,
             // pointer move/resize, … → not handled (move/resize is keyboard-driven).
             else => {},
         }

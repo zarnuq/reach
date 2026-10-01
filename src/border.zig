@@ -228,6 +228,31 @@ const Lines = struct {
     }
 };
 
+/// Right/bottom edge of what a tiled window really covers. A client can commit a
+/// bigger size than its tile (a min_width wider than the column — satty), and then
+/// the seam you SEE is its drawn edge, not the tile's: a line placed at the tile
+/// edge would float over the middle of the overflowing window. Without overflow
+/// these are just the tile edges.
+fn rightEdge(w: *const Window) i32 {
+    return w.x + w.drawnWidth();
+}
+
+fn bottomEdge(w: *const Window) i32 {
+    return w.y + w.drawnHeight();
+}
+
+/// The `idx`-th tiled window on `out`, in layout order.
+fn tiledAt(out: *const Output, idx: i32) ?*Window {
+    const ctx = Context.get();
+    var i: i32 = 0;
+    for (ctx.windows.items) |w| {
+        if (!query.tiledOn(w, out)) continue;
+        if (i == idx) return w;
+        i += 1;
+    }
+    return null;
+}
+
 /// Compute the focused window's seam lines. `cidx` (the focused window's index
 /// among the tiled windows) and `total` drive which seams exist and where the
 /// active/inactive cut falls; the two `total == 2` cases below are where dwl's
@@ -280,6 +305,12 @@ fn focusedLines() ?Lines {
     // line without it reaching over the neighbour.
     const in_master = cidx < nmaster;
 
+    // A leading line (left/top) normally starts at the focused window's own edge,
+    // but if the neighbour on that side overflows past it, the visible seam is the
+    // neighbour's drawn edge — so the line moves there, onto the neighbour's last
+    // pixels, and still never covers what's visible of the focused window. A
+    // trailing line (right/bottom) uses the focused window's drawn edge.
+
     if (nmaster == 1 and total == 2) {
         // Two panes side by side: one full-height divider on the focused pane's
         // facing edge, cut in half. The half alongside the focused pane is active —
@@ -294,7 +325,8 @@ fn focusedLines() ?Lines {
         const uy = f.y;
         const uh = f.height;
 
-        const x = if (cidx == 1) f.x - t else f.x + f.width;
+        const other = tiledAt(out, 1 - cidx) orelse return null;
+        const x = if (cidx == 1) @max(f.x, rightEdge(other)) - t else rightEdge(f);
         const mid = uy + @divFloor(uh, 2);
         const ay0 = if (cidx == 1) mid else uy;
         const ay1 = if (cidx == 1) uy + uh else mid;
@@ -309,7 +341,8 @@ fn focusedLines() ?Lines {
         const ux = f.x;
         const uw = f.width;
 
-        const y = if (cidx == 1) f.y - t else f.y + f.height;
+        const other = tiledAt(out, 1 - cidx) orelse return null;
+        const y = if (cidx == 1) @max(f.y, bottomEdge(other)) - t else bottomEdge(f);
         const mid = ux + @divFloor(uw, 2);
         const ax0 = if (cidx == 1) mid else ux;
         const ax1 = if (cidx == 1) ux + uw else mid;
@@ -337,9 +370,26 @@ fn focusedLines() ?Lines {
         // meet. They must never drift apart.
         const has_divider = nmaster > 0 and total > nmaster;
 
+        // How far the master column really reaches. Seen from the stack, the seam
+        // is wherever that is if it is past a stack window's own left edge.
+        var master_reach: i32 = 0;
         if (has_divider) {
-            const x = if (in_master) f.x + f.width else f.x - t;
-            l.active.add(.{ .x = x, .y = f.y, .w = t, .h = f.height });
+            var idx: i32 = 0;
+            for (ctx.windows.items) |w| {
+                if (!query.tiledOn(w, out)) continue;
+                if (idx < nmaster) master_reach = @max(master_reach, rightEdge(w));
+                idx += 1;
+            }
+        }
+        // Per window, since each one's seam can sit at its own drawn edge.
+        const divider_x = struct {
+            fn at(w: *const Window, master: bool, reach: i32, th: i32) i32 {
+                return if (master) rightEdge(w) else @max(w.x, reach) - th;
+            }
+        }.at;
+
+        if (has_divider) {
+            l.active.add(.{ .x = divider_x(f, in_master, master_reach, t), .y = f.y, .w = t, .h = f.height });
             var idx: i32 = 0;
             for (ctx.windows.items) |w| {
                 if (!query.tiledOn(w, out)) continue;
@@ -347,7 +397,7 @@ fn focusedLines() ?Lines {
                 idx += 1;
                 if (w == f) continue;
                 if (col_master != in_master) continue; // focused window's column only
-                l.inactive.add(.{ .x = x, .y = w.y, .w = t, .h = w.height });
+                l.inactive.add(.{ .x = divider_x(w, in_master, master_reach, t), .y = w.y, .w = t, .h = w.height });
             }
         }
         // Horizontal seams span exactly the focused window's own column, so the
@@ -356,17 +406,19 @@ fn focusedLines() ?Lines {
         // without the overshoot they miss each other by exactly one t x t square and
         // the L reads as broken. There is no cut to make — the seam is active end to
         // end — so these go in as plain rectangles rather than through `hline`.
-        const hx0 = if (has_divider and !in_master) f.x - t else f.x;
-        const hx1 = if (has_divider and in_master) f.x + f.width + t else f.x + f.width;
+        const hx0 = if (has_divider and !in_master) divider_x(f, false, master_reach, t) else f.x;
+        const hx1 = if (has_divider and in_master) rightEdge(f) + t else f.x + f.width;
 
         // Seam ABOVE, only when the focused window has a neighbour above it in its
         // own column.
         if ((cidx > 0 and cidx < nmaster) or (cidx > nmaster)) {
-            l.active.add(.{ .x = hx0, .y = f.y - t, .w = hx1 - hx0, .h = t });
+            const above = tiledAt(out, cidx - 1) orelse return null;
+            const y = @max(f.y, bottomEdge(above)) - t;
+            l.active.add(.{ .x = hx0, .y = y, .w = hx1 - hx0, .h = t });
         }
         // Seam BELOW, same reasoning.
         if ((cidx < nmaster - 1) or (cidx >= nmaster and cidx < total - 1)) {
-            l.active.add(.{ .x = hx0, .y = f.y + f.height, .w = hx1 - hx0, .h = t });
+            l.active.add(.{ .x = hx0, .y = bottomEdge(f), .w = hx1 - hx0, .h = t });
         }
     }
 
