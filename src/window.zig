@@ -89,6 +89,10 @@ pub const Window = struct {
     // calls. null = never sent.
     tiled_applied: ?bool = null,
 
+    // Last clip box size we sent in render() (0x0 = clipping disabled), so render()
+    // can avoid redundant set_clip_box calls. null = never sent.
+    clip_applied: ?struct { w: i32, h: i32 } = null,
+
     // River window-management v5 reports active capture sessions per window.
     // Retain the count so UI/IPC can expose it without another protocol change.
     capture_sessions: u32 = 0,
@@ -289,6 +293,18 @@ pub const Window = struct {
         }
         const out = self.output.?;
         self.node.setPosition(out.x + self.x, out.y + self.y);
+
+        // A tiled window may ignore the size we proposed and commit something
+        // bigger — a client with a min_width wider than its tile (satty) draws
+        // straight over its neighbour. Clip it to the tile it was given. Floating
+        // windows pick their own size, so they stay unclipped (0x0 disables it).
+        const clip_w: i32 = if (self.floating) 0 else self.width;
+        const clip_h: i32 = if (self.floating) 0 else self.height;
+        if (self.clip_applied == null or self.clip_applied.?.w != clip_w or self.clip_applied.?.h != clip_h) {
+            self.rwm.setClipBox(0, 0, clip_w, clip_h);
+            self.clip_applied = .{ .w = clip_w, .h = clip_h };
+        }
+
         self.rwm.show();
     }
 
