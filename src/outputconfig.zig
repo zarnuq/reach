@@ -26,6 +26,7 @@ const Context = @import("context.zig");
 
 const Mode = struct {
     rwm: *zwlr.OutputModeV1,
+    head: *Head,
     width: i32 = 0,
     height: i32 = 0,
     refresh: i32 = 0, // mHz
@@ -36,7 +37,6 @@ const Head = struct {
     rwm: *zwlr.OutputHeadV1,
     name: ?[:0]u8 = null,
     modes: std.ArrayList(*Mode) = .empty,
-    finished: bool = false,
 };
 
 var manager: ?*zwlr.OutputManagerV1 = null;
@@ -91,19 +91,37 @@ fn headListener(_: *zwlr.OutputHeadV1, event: zwlr.OutputHeadV1.Event, self: *He
             self.name = ctx.gpa.dupeZ(u8, std.mem.span(ev.name)) catch null;
         },
         .mode => |ev| addMode(self, ev.mode),
-        // Head unplugged → mark inert; we just skip it when configuring. (We
-        // bound v1, so there's no `release` request to call.)
-        .finished => self.finished = true,
+        // Head unplugged → inert. Free it and any modes still attached. (We bound
+        // v1, so there's no `release` request; destroying the proxies is all.)
+        .finished => removeHead(self),
         else => {}, // enabled/current_mode/position/transform/scale/etc — unused
     }
+}
+
+fn removeHead(h: *Head) void {
+    const gpa = Context.get().gpa;
+    for (h.modes.items) |m| {
+        m.rwm.destroy();
+        gpa.destroy(m);
+    }
+    h.modes.deinit(gpa);
+    if (h.name) |n| gpa.free(n);
+    if (std.mem.indexOfScalar(*Head, heads.items, h)) |i| _ = heads.orderedRemove(i);
+    h.rwm.destroy();
+    gpa.destroy(h);
 }
 
 fn addMode(h: *Head, rwm: *zwlr.OutputModeV1) void {
     const ctx = Context.get();
     const m = ctx.gpa.create(Mode) catch return;
-    m.* = .{ .rwm = rwm };
+    m.* = .{ .rwm = rwm, .head = h };
+    // Untracked, the mode's `finished` could outlive its head; just ignore it.
+    h.modes.append(ctx.gpa, m) catch {
+        rwm.destroy();
+        ctx.gpa.destroy(m);
+        return;
+    };
     rwm.setListener(*Mode, modeListener, m);
-    h.modes.append(ctx.gpa, m) catch {};
 }
 
 fn modeListener(_: *zwlr.OutputModeV1, event: zwlr.OutputModeV1.Event, self: *Mode) void {
@@ -114,7 +132,14 @@ fn modeListener(_: *zwlr.OutputModeV1, event: zwlr.OutputModeV1.Event, self: *Mo
         },
         .refresh => |ev| self.refresh = ev.refresh,
         .preferred => self.preferred = true,
-        .finished => {},
+        // Mode withdrawn (alone, or before its head finishes) → drop it so
+        // pickMode can't hand a dead mode to set_mode.
+        .finished => {
+            const modes = &self.head.modes;
+            if (std.mem.indexOfScalar(*Mode, modes.items, self)) |i| _ = modes.orderedRemove(i);
+            self.rwm.destroy();
+            Context.get().gpa.destroy(self);
+        },
     }
 }
 
@@ -135,7 +160,6 @@ fn buildAndApply(serial: u32) void {
     conf.setListener(?*anyopaque, configListener, null);
 
     for (heads.items) |h| {
-        if (h.finished) continue;
         // Enable every present head; only matched ones get explicit settings.
         const ch = conf.enableHead(h.rwm) catch continue;
         const mon = matchMonitor(h.name) orelse continue;
