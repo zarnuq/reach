@@ -96,10 +96,8 @@ pub const Window = struct {
     // calls. null = never sent.
     tiled_applied: ?bool = null,
 
-    // River window-management v5 reports active capture sessions per window.
-    // Retain the count so UI/IPC can expose it without another protocol change.
-    capture_sessions: u32 = 0,
-
+    /// Wrap a new river window, assign it to an output, make it the new master
+    /// (head of the stack) and the focus.
     pub fn create(rwm: *river.WindowV1) !*Window {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Window);
@@ -108,9 +106,31 @@ pub const Window = struct {
         // Each window owns one scene node; grab it once here. The window event
         // that brings us here fires inside a manage sequence, so this is fine.
         const node = try rwm.getNode();
+        errdefer {
+            node.destroy();
+            rwm.destroy();
+        }
 
         self.* = .{ .rwm = rwm, .node = node };
         rwm.setListener(*Window, listener, self);
+
+        // Place the window on the selected monitor (dwl spawns on `selmon`), so
+        // apps launched by a keybind appear where the keyboard focus is — not on
+        // whatever output happens to be first (DP-1). Fall back to the pointer's
+        // output, then the focused window's output, then the first.
+        const out = ctx.current_output orelse ctx.pointer_output orelse query.selectedOutput();
+        self.output = out;
+
+        // New windows land on the desktop the output is currently viewing
+        // (dwl behavior), so they appear on the active workspace.
+        if (out) |o| self.desktop = o.desktop;
+
+        // Insert at the head so a new window becomes master (dwm-like).
+        try ctx.windows.insert(ctx.gpa, 0, self);
+        // The new window is focused, so its monitor becomes the selected one
+        // (keeps the desktop keys on the window you just opened).
+        ctx.focus(self);
+        log.info("window created (total {d})", .{ctx.windows.items.len});
         return self;
     }
 
@@ -166,22 +186,16 @@ pub const Window = struct {
         // Tell river whether this window is tiled (snapped on all edges, no client
         // shadows) or floating. Only send when it changes.
         const want_tiled = !self.floating;
-        if (self.tiled_applied == null or self.tiled_applied.? != want_tiled) {
-            if (want_tiled) {
-                self.rwm.setTiled(.{ .top = true, .bottom = true, .left = true, .right = true });
-            } else {
-                self.rwm.setTiled(.{});
-            }
+        if (self.tiled_applied != want_tiled) {
+            const t = want_tiled;
+            self.rwm.setTiled(.{ .top = t, .bottom = t, .left = t, .right = t });
             self.tiled_applied = want_tiled;
         }
 
         // No geometry yet (no output, or never laid out) → propose 0,0, which
         // lets the client pick its own size until we can place it.
-        if (!self.mapped or self.output == null) {
-            self.rwm.proposeDimensions(0, 0);
-            return;
-        }
-        self.rwm.proposeDimensions(self.width, self.height);
+        const placed = self.mapped and self.output != null;
+        self.rwm.proposeDimensions(if (placed) self.width else 0, if (placed) self.height else 0);
     }
 
     /// Resolve a customfloat axis value (dwl semantics): 0 → `fallback` px,
@@ -302,12 +316,10 @@ pub const Window = struct {
         }
         // Fullscreen: river positions/sizes the window to the output, so there is
         // no geometry for us to set — just show it.
-        if (self.fullscreen) {
-            self.rwm.show();
-            return;
+        if (!self.fullscreen) {
+            const out = self.output.?;
+            self.node.setPosition(out.x + self.x, out.y + self.y);
         }
-        const out = self.output.?;
-        self.node.setPosition(out.x + self.x, out.y + self.y);
         self.rwm.show();
     }
 
@@ -340,11 +352,7 @@ pub const Window = struct {
             // rules (once) now that identity is known, and ask for a fresh cycle
             // so any float/desktop/monitor change takes effect.
             .app_id => |ev| {
-                if (self.app_id) |a| ctx.gpa.free(a);
-                self.app_id = if (ev.app_id) |s|
-                    ctx.gpa.dupeZ(u8, std.mem.span(s)) catch null
-                else
-                    null;
+                replaceStr(&self.app_id, ev.app_id);
                 if (ev.app_id) |id| log.info("app_id: {s}", .{id});
                 self.applyRules();
             },
@@ -353,11 +361,7 @@ pub const Window = struct {
             // river for a fresh cycle so it gets published (a title change alone
             // wouldn't otherwise trigger one).
             .title => |ev| {
-                if (self.title) |t| ctx.gpa.free(t);
-                self.title = if (ev.title) |s|
-                    ctx.gpa.dupeZ(u8, std.mem.span(s)) catch null
-                else
-                    null;
+                replaceStr(&self.title, ev.title);
                 // A title-based rule may only become matchable now.
                 self.applyRules();
                 ctx.rwm.manageDirty();
@@ -368,23 +372,9 @@ pub const Window = struct {
                 const closing_output = self.output;
                 if (std.mem.indexOfScalar(*Window, ctx.windows.items, self)) |i| _ = ctx.windows.orderedRemove(i);
                 if (ctx.focused == self) {
-                    // The next visible window ON THIS OUTPUT, or nothing.
-                    //
-                    // It used to fall back to any visible window, then to any
-                    // window at all, which sent the keyboard to another MONITOR
-                    // whenever you closed the last window on this one — and
-                    // nothing else moved with it. The pointer stayed put, and so
-                    // did the selection a panel draws, so the next thing you typed
-                    // went to a screen you were not looking at and had no cursor
-                    // on. An empty output that keeps the keyboard until you point
-                    // somewhere is the quieter wrong answer, and sloppy focus
-                    // resolves it the moment the pointer enters anything.
-                    //
-                    // This is the same policy `action.refocus` already applies
-                    // when a desktop change empties an output; the close path was
-                    // the one place that disagreed.
-                    // `output` is optional: a window can be closed before river
-                    // ever placed it on one, and then there is nothing to stay on.
+                    // The next visible window ON THIS OUTPUT, or nothing — never
+                    // another monitor (same policy as `action.refocus`). No output
+                    // (closed before river placed it) means nothing to stay on.
                     ctx.focused = if (closing_output) |o| query.topVisibleOn(o) else null;
                     ctx.rwm.manageDirty();
                 }
@@ -413,11 +403,16 @@ pub const Window = struct {
                 ctx.rwm.manageDirty();
             },
 
-            .capture_sessions => |ev| self.capture_sessions = ev.count,
-
             // decoration_hint, maximize requests,
             // pointer move/resize, … → not handled (move/resize is keyboard-driven).
             else => {},
         }
     }
 };
+
+/// Replace an owned string with a dup of `s` (null clears it; so does OOM).
+pub fn replaceStr(slot: *?[:0]u8, s: ?[*:0]const u8) void {
+    const gpa = Context.get().gpa;
+    if (slot.*) |old| gpa.free(old);
+    slot.* = if (s) |p| gpa.dupeZ(u8, std.mem.span(p)) catch null else null;
+}

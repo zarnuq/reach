@@ -28,7 +28,8 @@ const reload = @import("reload.zig");
 const ipc = @import("ipc.zig");
 const Window = @import("window.zig").Window;
 const Output = @import("output.zig").Output;
-const Seat = @import("seat.zig").Seat;
+const seat = @import("seat.zig");
+const Seat = seat.Seat;
 
 /// Initialise the global context and attach the window-manager listener.
 pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, globals: Context.Globals) void {
@@ -88,15 +89,12 @@ pub fn run(display: *wl.Display) !void {
             }
         };
 
-        // Pointer motion feeds the shake detector; its tick animates the size.
+        // Pointer motion feeds the shake detector; its tick drives the
+        // sustained-shake accumulator. Neither needs a manage cycle.
         for (0..shake.device_count) |i| {
-            if (fds[shake_first + i].revents & std.posix.POLL.IN != 0) {
-                if (shake.onMotion(i)) dirty = true;
-            }
+            if (fds[shake_first + i].revents & std.posix.POLL.IN != 0) shake.onMotion(i);
         }
-        if (shake_timer_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) {
-            if (shake.onTimer()) dirty = true;
-        };
+        if (shake_timer_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) shake.onTimer();
 
         // State socket. Clients BEFORE the listener, and descending: onClient may
         // drop a client (compacting the array), and accepting one appends to it —
@@ -162,13 +160,12 @@ fn manageCycle() void {
     // Tile each output.
     for (ctx.outputs.items) |o| layout.arrange(o);
 
-    // Place floating windows (centered on their output).
+    // Place floating windows (centered on their output), then tell river each
+    // window's tiled state and proposed size.
     for (ctx.windows.items) |w| {
         if (w.floating) w.placeFloating();
+        w.manage();
     }
-
-    // Tell river each window's tiled state and proposed size.
-    for (ctx.windows.items) |w| w.manage();
 
     // Keyboard focus follows the focused window.
     if (ctx.focused) |f| {
@@ -179,8 +176,8 @@ fn manageCycle() void {
     // it (dwl warpcursor). Done last, so window geometry from arrange() is final.
     action.applyWarp();
 
-    // Push the cursor theme/size (resting value at startup, or a shake step).
-    shake.applyPending();
+    // Push the cursor theme/size (at startup, or after a reload changed it).
+    seat.applyCursor();
 }
 
 /// RENDER: position and show every window, draw the tmux borders, then order the
@@ -230,78 +227,10 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
         .session_locked => log.info("session locked", .{}),
         .session_unlocked => log.info("session unlocked", .{}),
 
-        // A new window. Create its wrapper, assign it to an output, make it the
-        // new master (head of the stack) and the focus.
-        .window => |ev| {
-            const w = Window.create(ev.id) catch |err| {
-                log.err("failed to create window: {}", .{err});
-                return;
-            };
-
-            // Place the window on the selected monitor (dwl spawns on `selmon`),
-            // so apps launched by a keybind appear where the keyboard focus is —
-            // not on whatever output happens to be first (DP-1). Fall back to the
-            // pointer's output, then the focused window's output, then the first.
-            var out: ?*Output = ctx.current_output;
-            if (out == null) out = ctx.pointer_output;
-            if (out == null) {
-                if (ctx.focused) |f| out = f.output;
-            }
-            if (out == null and ctx.outputs.items.len > 0) out = ctx.outputs.items[0];
-            w.output = out;
-
-            // New windows land on the desktop the output is currently viewing
-            // (dwl behavior), so they appear on the active workspace.
-            if (out) |o| w.desktop = o.desktop;
-
-            // Insert at the head so a new window becomes master (dwm-like).
-            ctx.windows.insert(ctx.gpa, 0, w) catch |err| {
-                log.err("failed to track window: {}", .{err});
-                w.node.destroy();
-                w.rwm.destroy();
-                ctx.gpa.destroy(w);
-                return;
-            };
-            // The new window is focused, so its monitor becomes the selected one
-            // (keeps the desktop keys on the window you just opened).
-            ctx.focus(w);
-            log.info("window created (total {d})", .{ctx.windows.items.len});
-        },
-
-        .output => |ev| {
-            const o = Output.create(ev.id) catch |err| {
-                log.err("failed to create output: {}", .{err});
-                return;
-            };
-            ctx.outputs.append(ctx.gpa, o) catch |err| {
-                log.err("failed to track output: {}", .{err});
-                o.rwm.destroy();
-                ctx.gpa.destroy(o);
-                return;
-            };
-            // First monitor to appear is selected by default.
-            if (ctx.current_output == null) ctx.current_output = o;
-            // Re-home any windows orphaned by a total output blackout (e.g. all
-            // outputs were removed during a VT switch and are now reappearing).
-            for (ctx.windows.items) |w| {
-                if (w.output == null) w.output = o;
-            }
-            log.info("output created (total {d})", .{ctx.outputs.items.len});
-        },
-
-        .seat => |ev| {
-            const s = Seat.create(ev.id) catch |err| {
-                log.err("failed to create seat: {}", .{err});
-                return;
-            };
-            ctx.seats.append(ctx.gpa, s) catch |err| {
-                log.err("failed to track seat: {}", .{err});
-                s.rwm.destroy();
-                ctx.gpa.destroy(s);
-                return;
-            };
-            if (ctx.primary_seat == null) ctx.primary_seat = s;
-            log.info("seat created (total {d})", .{ctx.seats.items.len});
-        },
+        // New objects. Each create() wires up and tracks its own wrapper, as
+        // each object's own closed/removed handler untracks it.
+        .window => |ev| _ = Window.create(ev.id) catch |err| return log.err("failed to create window: {}", .{err}),
+        .output => |ev| _ = Output.create(ev.id) catch |err| return log.err("failed to create output: {}", .{err}),
+        .seat => |ev| _ = Seat.create(ev.id) catch |err| return log.err("failed to create seat: {}", .{err}),
     }
 }

@@ -6,6 +6,7 @@
 // don't act on are ignored.
 
 const std = @import("std");
+const log = std.log.scoped(.seat);
 
 const wayland = @import("wayland");
 const river = wayland.client.river;
@@ -18,14 +19,21 @@ const query = @import("query.zig");
 pub const Seat = struct {
     rwm: *river.SeatV1,
 
+    /// Wrap a new river seat and track it. The first one becomes the primary.
     pub fn create(rwm: *river.SeatV1) !*Seat {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Seat);
+        errdefer ctx.gpa.destroy(self);
         self.* = .{ .rwm = rwm };
+        errdefer rwm.destroy();
         rwm.setListener(*Seat, listener, self);
 
         // Hook up the keybindings (desktops etc.) for this seat.
         binding.registerForSeat(self);
+
+        try ctx.seats.append(ctx.gpa, self);
+        if (ctx.primary_seat == null) ctx.primary_seat = self;
+        log.info("seat created (total {d})", .{ctx.seats.items.len});
         return self;
     }
 
@@ -44,7 +52,6 @@ pub const Seat = struct {
                     ctx.rwm.manageDirty();
                 }
             },
-            .pointer_leave => {},
 
             // Where the pointer IS, rather than which window it entered.
             //
@@ -89,3 +96,16 @@ pub const Seat = struct {
         }
     }
 };
+
+/// The cursor theme/size still has to be pushed to the primary seat. Set by
+/// shake.start() — at startup, and again when a reload changes the cursor config.
+pub var cursor_dirty: bool = false;
+
+/// Called from the manage cycle. set_xcursor_theme isn't marked manage-only, but
+/// issuing it inside a sequence is valid either way.
+pub fn applyCursor() void {
+    if (!cursor_dirty) return;
+    const s = Context.get().primary_seat orelse return; // no seat yet; retry next cycle
+    cursor_dirty = false;
+    s.rwm.setXcursorTheme(config.cursor.theme.ptr, config.cursor.size);
+}
