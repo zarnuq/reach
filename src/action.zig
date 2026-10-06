@@ -10,7 +10,8 @@ const config = @import("config.zig");
 const gamma = @import("gamma.zig");
 const reload = @import("reload.zig");
 const Context = @import("context.zig");
-const Output = @import("output.zig").Output;
+const output = @import("output.zig");
+const Output = output.Output;
 const query = @import("query.zig");
 const Window = @import("window.zig").Window;
 
@@ -121,11 +122,11 @@ pub fn execute(action: Action) void {
             ctx.warp_pending = true;
         },
         .setmfact => |delta| {
-            if (ctx.current_output) |out| out.mfact = @max(0.1, @min(0.9, out.mfact + delta));
+            if (ctx.current_output) |out| out.mfact = output.clampMfact(out.mfact + delta);
             ctx.warp_pending = true;
         },
         .incnmaster => |delta| {
-            if (ctx.current_output) |out| out.nmaster = @max(0, out.nmaster + delta);
+            if (ctx.current_output) |out| out.nmaster = output.clampNmaster(out.nmaster + delta);
             ctx.warp_pending = true;
         },
         .focusmon => |dir| {

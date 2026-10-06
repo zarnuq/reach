@@ -116,8 +116,8 @@ pub fn apply() void {
     const mfact_changed = config.mfact != old_mfact;
     const nmaster_changed = config.nmaster != old_nmaster;
     for (ctx.outputs.items) |o| {
-        if (mfact_changed) o.mfact = output.configMfact();
-        if (nmaster_changed) o.nmaster = output.configNmaster();
+        if (mfact_changed) o.mfact = output.clampMfact(config.mfact);
+        if (nmaster_changed) o.nmaster = output.clampNmaster(config.nmaster);
     }
 
     // `env` and `autostart` are deliberately one-shot: the variables were exported

@@ -98,7 +98,7 @@ pub const Output = struct {
     pub fn create(rwm: *river.OutputV1) !void {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Output);
-        self.* = .{ .rwm = rwm, .mfact = configMfact(), .nmaster = configNmaster() };
+        self.* = .{ .rwm = rwm, .mfact = clampMfact(config.mfact), .nmaster = clampNmaster(config.nmaster) };
         errdefer self.destroy();
         rwm.setListener(*Output, listener, self);
 
@@ -212,17 +212,16 @@ pub const Output = struct {
     }
 };
 
-/// config.mfact, clamped to the range the setmfact action keeps it in. The file is
-/// not trusted to: mfact past 1 makes the stack column negative, and every stack
-/// window collapses to a pixel.
-pub fn configMfact() f32 {
-    return std.math.clamp(config.mfact, 0.1, 0.9);
+/// The range mfact is kept in, whether it comes from config.zon or setmfact: past
+/// 1 the stack column goes negative and every stack window collapses to a pixel.
+pub fn clampMfact(v: f32) f32 {
+    return std.math.clamp(v, 0.1, 0.9);
 }
 
-/// config.nmaster, floored at 0 like the incnmaster action. A negative count
-/// would reserve an empty master column and skew every row height.
-pub fn configNmaster() i32 {
-    return @max(0, config.nmaster);
+/// nmaster floored at 0, from config.zon or incnmaster. A negative count would
+/// reserve an empty master column and skew every row height.
+pub fn clampNmaster(v: i32) i32 {
+    return @max(0, v);
 }
 
 /// wl_output listener — we only care about the connector name. Once it arrives
