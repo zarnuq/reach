@@ -6,9 +6,9 @@
 // area, `inner_gap` between adjacent windows (these gutters are where the
 // tmux-style borders in border.zig are drawn).
 //
-// arrange() only sets each window's x/y/width/height (output-relative). The
-// actual protocol calls happen later: manage() proposes the size, render()
-// positions the node.
+// arrange() only sets each window's x/y/width/height (output-relative) and marks
+// it mapped. The actual protocol calls happen later: manage() proposes the size,
+// render() positions the node.
 
 const std = @import("std");
 
@@ -69,27 +69,20 @@ pub fn arrange(out: *Output) void {
 
     for (tiled.items, 0..) |w, idx| {
         const i: i32 = @intCast(idx);
-        if (i < nmaster) {
-            // Master column, split vertically into nmaster rows. The division
-            // leaves up to nmaster-1 px over, so the LAST row runs to the bottom
-            // edge instead of taking a cell: handing the remainder to nobody leaves
-            // a sliver of background under the column whose height changes with the
-            // window count.
-            const cell_h = @divFloor(usable_h - (nmaster - 1) * config.inner_gap, nmaster);
-            w.x = usable_x;
-            w.y = usable_y + i * (cell_h + config.inner_gap);
-            w.width = master_w;
-            w.height = if (i == nmaster - 1) usable_y + usable_h - w.y else cell_h;
-        } else {
-            // Stack column, split vertically into nstack rows — same remainder
-            // rule as the master column above.
-            const si = i - nmaster;
-            const cell_h = @divFloor(usable_h - (nstack - 1) * config.inner_gap, nstack);
-            w.x = usable_x + master_w + gutter;
-            w.y = usable_y + si * (cell_h + config.inner_gap);
-            w.width = stack_w;
-            w.height = if (si == nstack - 1) usable_y + usable_h - w.y else cell_h;
-        }
+        // Pick the column: masters fill the left one, the rest the stack.
+        const in_master = i < nmaster;
+        const rows = if (in_master) nmaster else nstack;
+        const row = if (in_master) i else i - nmaster;
+        w.x = if (in_master) usable_x else usable_x + master_w + gutter;
+        w.width = if (in_master) master_w else stack_w;
+
+        // Split the column vertically into `rows` cells. The division leaves up to
+        // rows-1 px over, so the LAST row runs to the bottom edge instead of taking
+        // a cell: handing the remainder to nobody leaves a sliver of background
+        // under the column whose height changes with the window count.
+        const cell_h = @divFloor(usable_h - (rows - 1) * config.inner_gap, rows);
+        w.y = usable_y + row * (cell_h + config.inner_gap);
+        w.height = if (row == rows - 1) usable_y + usable_h - w.y else cell_h;
         w.width = @max(1, w.width);
         w.height = @max(1, w.height);
         w.mapped = true;

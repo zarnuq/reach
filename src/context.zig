@@ -45,13 +45,14 @@ pub const Context = struct {
 
     // river + core globals (bound in main.zig). `rwm` is required; the optionals
     // gate optional subsystems (borders) and a minimal compositor could lack
-    // them. Copied from the `Globals` passed to init.
+    // them. Copied field-for-field from the `Globals` passed to init, so every
+    // `Globals` field must have a same-named field here.
     rwm: *river.WindowManagerV1,
-    xkb_bindings: ?*river.XkbBindingsV1,
-    layer_shell: ?*river.LayerShellV1,
-    wl_compositor: ?*wl.Compositor,
-    wp_viewporter: ?*wp.Viewporter,
-    wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1,
+    xkb_bindings: ?*river.XkbBindingsV1 = null,
+    layer_shell: ?*river.LayerShellV1 = null,
+    wl_compositor: ?*wl.Compositor = null,
+    wp_viewporter: ?*wp.Viewporter = null,
+    wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
 
     // The managed world.
     //   windows — stack order; index 0 is the head (newest / master / focused).
@@ -115,14 +116,10 @@ pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, g: Globals) void {
         .gpa = gpa,
         .registry = registry,
         .rwm = g.rwm,
-        .xkb_bindings = g.xkb_bindings,
-        .layer_shell = g.layer_shell,
-        .wl_compositor = g.wl_compositor,
-        .wp_viewporter = g.wp_viewporter,
-        .wp_single_pixel_buffer_manager = g.wp_single_pixel_buffer_manager,
         .windows = .empty,
         .outputs = .empty,
         .seats = .empty,
         .borders = .empty,
     };
+    inline for (std.meta.fields(Globals)) |f| @field(instance, f.name) = @field(g, f.name);
 }

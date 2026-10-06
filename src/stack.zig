@@ -5,12 +5,8 @@
 // implicit: per the protocol, "the initial position of a node in the render list
 // is undefined", so whatever is not placed is wherever it happens to land.
 //
-// This used to be spread across window.zig, border.zig and the since-removed
-// built-in bar.zig, each calling place_top on its own during the render cycle.
-// The resulting order was whatever the *call order across those files* produced — which is how a focused tiled
-// window's border ended up painted over a floating window that was stacked above
-// it. Anything with an opinion about layering states it here instead, and the
-// render cycle calls `apply()` once after everything has been drawn.
+// Anything with an opinion about layering states it here, and the render cycle
+// calls `apply()` once after everything has been drawn.
 //
 // Bottom → top:
 //   1. tiled windows       — the layout keeps them from overlapping, but the list
