@@ -23,15 +23,10 @@ pub fn arrange(out: *Output) void {
     const ctx = Context.get();
 
     // Gather this output's tiled windows on the currently-viewed desktop, in stack
-    // order (head = master). `query.tiledOn` is the shared definition — border.zig
-    // indexes into the very sequence built here, so the two must not drift.
+    // order (head = master).
     var tiled: std.ArrayList(*Window) = .empty;
     defer tiled.deinit(ctx.gpa);
-    for (ctx.windows.items) |w| {
-        if (query.tiledOn(w, out)) {
-            tiled.append(ctx.gpa, w) catch return; // OOM: skip this frame
-        }
-    }
+    query.collectTiled(ctx.gpa, out, &tiled) catch return; // OOM: skip this frame
 
     const n: i32 = @intCast(tiled.items.len);
     if (n == 0) return;

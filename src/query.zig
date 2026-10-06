@@ -1,5 +1,6 @@
 // query.zig — shared read-only predicates over the Context, defined once so callers can't disagree.
 
+const std = @import("std");
 const wayland = @import("wayland");
 const river = wayland.client.river;
 
@@ -7,7 +8,8 @@ const Context = @import("context.zig");
 const Output = @import("output.zig").Output;
 const Window = @import("window.zig").Window;
 
-/// Does `w` take part in `out`'s tiling right now?
+/// Append the windows taking part in `out`'s tiling right now to `list`, in stack
+/// order (head = master).
 ///
 /// This is THE definition — layout.arrange builds its sequence from it, and
 /// border.zig walks that same sequence to find the focused window's index. Any
@@ -17,8 +19,13 @@ const Window = @import("window.zig").Window;
 /// out and sets that flag, so gating on it here would be circular: a fresh window
 /// would never be included, so never mapped, so never shown. By the time borders
 /// are drawn arrange() has already run, so the flag adds nothing there either.
-pub fn tiledOn(w: *const Window, out: *const Output) bool {
-    return w.output == out and !w.floating and !w.fullscreen and w.desktop == out.desktop;
+pub fn collectTiled(gpa: std.mem.Allocator, out: *Output, list: *std.ArrayList(*Window)) !void {
+    const ctx = Context.get();
+    for (ctx.windows.items) |w| {
+        if (w.output == out and !w.floating and !w.fullscreen and w.desktop == out.desktop) {
+            try list.append(gpa, w);
+        }
+    }
 }
 
 /// The managed Window wrapping river's `rwm`, or null if it is not one of ours
@@ -65,9 +72,7 @@ pub fn outputAt(x: i32, y: i32) ?*Output {
 }
 
 /// The output the user is driving — dwl's `selmon`. The desktop and layout actions
-/// act on it and the state socket reports it as focused, and it must be ONE
-/// answer: those two reading it differently is precisely what made a panel's
-/// highlight point at a different monitor than the keys.
+/// act on it and the state socket reports it as focused, so it must be ONE answer.
 ///
 /// `current_output` is the real answer and is set as soon as any output appears;
 /// the rest is fallback for the window between startup and that first event.
