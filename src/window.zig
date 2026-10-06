@@ -282,7 +282,7 @@ pub const Window = struct {
             }
             // 0 = "no desktop in this rule"; anything past the configured count
             // is ignored rather than sending the window somewhere unreachable.
-            if (r.desktop != 0 and r.desktop <= config.desktops.count) {
+            if (config.validDesktop(r.desktop)) {
                 self.desktop = r.desktop;
                 if (r.switchto) {
                     if (self.output) |o| o.desktop = r.desktop;

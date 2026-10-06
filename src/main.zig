@@ -237,6 +237,7 @@ fn capped(g: anytype, comptime T: type) u32 {
 test {
     _ = @import("action.zig");
     _ = @import("binding.zig");
+    _ = @import("config.zig");
     _ = @import("confparse.zig");
     _ = @import("gamma.zig");
     _ = @import("reload.zig");

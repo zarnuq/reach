@@ -64,13 +64,13 @@ pub fn execute(action: Action) void {
         // message naming desktop 12 is a mistake, and silently landing on 9 hides
         // it. 0 is never a valid desktop (see config.desktops).
         .view => |d| {
-            if (!validDesktop(d)) return;
+            if (!config.validDesktop(d)) return;
             const out = query.selectedOutput() orelse return;
             out.desktop = d;
             refocus(out);
         },
         .send => |d| {
-            if (!validDesktop(d)) return;
+            if (!config.validDesktop(d)) return;
             const out = query.selectedOutput() orelse return;
             if (ctx.focused) |f| {
                 f.desktop = d;
@@ -142,19 +142,6 @@ pub fn execute(action: Action) void {
 // ---------------------------------------------------------------------------
 // The window-manager operations the actions are built from
 // ---------------------------------------------------------------------------
-
-/// Whether `d` names a real desktop. Desktops are 1-based, so 0 is always
-/// invalid; the upper bound is `config.desktops.count`.
-pub fn validDesktop(d: u32) bool {
-    return d >= 1 and d <= config.desktops.count;
-}
-
-test "desktop validation uses one-based bounds" {
-    try std.testing.expect(!validDesktop(0));
-    try std.testing.expect(validDesktop(1));
-    try std.testing.expect(validDesktop(config.desktops.count));
-    try std.testing.expect(!validDesktop(config.desktops.count + 1));
-}
 
 /// Ensure focus lands on a window that's actually visible on `out` after a view
 /// or desktop change; clears focus if the output is now empty.

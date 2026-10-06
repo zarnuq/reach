@@ -279,3 +279,16 @@ pub const desktops = struct {
     /// Number of desktops. Bound above by 9, since the binds are MOD+1..9.
     pub const count = 9;
 };
+
+/// Whether `d` names a real desktop. Desktops are 1-based, so 0 is always
+/// invalid; the upper bound is `desktops.count`.
+pub fn validDesktop(d: u32) bool {
+    return d >= 1 and d <= desktops.count;
+}
+
+test "desktop validation uses one-based bounds" {
+    try std.testing.expect(!validDesktop(0));
+    try std.testing.expect(validDesktop(1));
+    try std.testing.expect(validDesktop(desktops.count));
+    try std.testing.expect(!validDesktop(desktops.count + 1));
+}

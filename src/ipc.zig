@@ -29,7 +29,6 @@
 
 const std = @import("std");
 const linux = std.os.linux;
-const action = @import("action.zig");
 const binding = @import("binding.zig");
 const log = std.log.scoped(.ipc);
 
@@ -225,7 +224,7 @@ fn compose() bool {
         // opens an app on an unviewed desktop lights its cell up.
         var occupied = [_]bool{false} ** config.desktops.count;
         for (ctx.windows.items) |w| {
-            if (w.output == o and action.validDesktop(w.desktop)) {
+            if (w.output == o and config.validDesktop(w.desktop)) {
                 occupied[w.desktop - 1] = true;
             }
         }
