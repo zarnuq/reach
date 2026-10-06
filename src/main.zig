@@ -46,17 +46,14 @@ const gamma = @import("gamma.zig");
 const min_rwm_version = 3; // river_seat_v1.pointer_warp
 const min_xkb_bindings_version = 2; // river_xkb_bindings_v1.get_seat (chords)
 
-/// The objects we bind from the registry (definition + per-field docs live on
-/// `Context.Globals`). `rwm` is optional *here* only because globals arrive
-/// asynchronously; we promote it to non-optional after the initial roundtrip
-/// confirms it is present.
+/// The objects we bind from the registry. `core` is what the WM keeps (fields
+/// documented on `Context.Globals`); its `rwm` is filled in only after the initial
+/// roundtrip confirms the global is present — until then it lives in the optional
+/// `rwm` here, since globals arrive asynchronously. The rest go straight to their
+/// own modules.
 const RegistryGlobals = struct {
-    wl_compositor: ?*wl.Compositor = null,
-    wp_viewporter: ?*wp.Viewporter = null,
-    wp_single_pixel_buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
+    core: Context.Globals = .{ .rwm = undefined },
     rwm: ?*river.WindowManagerV1 = null,
-    xkb_bindings: ?*river.XkbBindingsV1 = null,
-    layer_shell: ?*river.LayerShellV1 = null,
     output_manager: ?*zwlr.OutputManagerV1 = null,
     input_manager: ?*river.InputManagerV1 = null,
     gamma_manager: ?*zwlr.GammaControlManagerV1 = null,
@@ -123,23 +120,17 @@ pub fn main() !void {
 
     // Warn (but continue) on the soft dependencies; reach degrades gracefully
     // without them (no borders, no keybindings, as noted per-global).
-    if (globals.layer_shell == null) log.warn("no river_layer_shell_v1 (panels cannot be given a default output)", .{});
-    if (globals.xkb_bindings == null) log.warn("no river_xkb_bindings_v1 (needed later for keybinds)", .{});
-    if (globals.wp_viewporter == null) log.warn("no wp_viewporter (borders disabled)", .{});
-    if (globals.wp_single_pixel_buffer_manager == null) log.warn("no wp_single_pixel_buffer_v1 (borders disabled)", .{});
+    // A missing river_xkb_bindings_v1 is reported by binding.registerForSeat.
+    if (globals.core.layer_shell == null) log.warn("no river_layer_shell_v1 (panels cannot be given a default output)", .{});
+    if (globals.core.wp_viewporter == null) log.warn("no wp_viewporter (borders disabled)", .{});
+    if (globals.core.wp_single_pixel_buffer_manager == null) log.warn("no wp_single_pixel_buffer_v1 (borders disabled)", .{});
 
     // 3. Initialise the WM core and run. `init` populates the global context and
     //    attaches the window-manager listener; `run` blocks in the poll loop
     //    until river tells us to stop. `rwm` is now known-present, so the Context
     //    copy takes it non-optional.
-    wm.init(gpa, registry, .{
-        .rwm = rwm,
-        .xkb_bindings = globals.xkb_bindings,
-        .layer_shell = globals.layer_shell,
-        .wl_compositor = globals.wl_compositor,
-        .wp_viewporter = globals.wp_viewporter,
-        .wp_single_pixel_buffer_manager = globals.wp_single_pixel_buffer_manager,
-    });
+    globals.core.rwm = rwm;
+    wm.init(gpa, registry, globals.core);
     defer wm.deinit();
 
     // SIGHUP → config reload, delivered on the poll loop.
@@ -191,53 +182,50 @@ pub fn main() !void {
 fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, globals: *RegistryGlobals) void {
     switch (event) {
         .global => |g| {
-            // We compare the advertised interface name against each binding's
-            // canonical name. `orderZ(... ) == .eq` is the null-terminated string
-            // compare zig-wayland expects here.
-            if (std.mem.orderZ(u8, g.interface, wl.Compositor.interface.name) == .eq) {
-                globals.wl_compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, wp.Viewporter.interface.name) == .eq) {
-                globals.wp_viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, wp.SinglePixelBufferManagerV1.interface.name) == .eq) {
-                globals.wp_single_pixel_buffer_manager = registry.bind(g.name, wp.SinglePixelBufferManagerV1, 1) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, river.WindowManagerV1.interface.name) == .eq) {
+            const c = &globals.core;
+            if (is(g, wl.Compositor)) {
+                c.wl_compositor = registry.bind(g.name, wl.Compositor, 4) catch return;
+            } else if (is(g, wp.Viewporter)) {
+                c.wp_viewporter = registry.bind(g.name, wp.Viewporter, 1) catch return;
+            } else if (is(g, wp.SinglePixelBufferManagerV1)) {
+                c.wp_single_pixel_buffer_manager = registry.bind(g.name, wp.SinglePixelBufferManagerV1, 1) catch return;
+            } else if (is(g, river.WindowManagerV1)) {
                 if (g.version < min_rwm_version) {
                     log.err("river_window_manager_v1 v{d} advertised; reach requires v{d}+", .{ g.version, min_rwm_version });
                     return;
                 }
-                globals.rwm = registry.bind(
-                    g.name,
-                    river.WindowManagerV1,
-                    @min(g.version, river.WindowManagerV1.generated_version),
-                ) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, river.XkbBindingsV1.interface.name) == .eq) {
+                globals.rwm = registry.bind(g.name, river.WindowManagerV1, capped(g, river.WindowManagerV1)) catch return;
+            } else if (is(g, river.XkbBindingsV1)) {
                 if (g.version < min_xkb_bindings_version) {
                     log.warn("river_xkb_bindings_v1 v{d} advertised; reach requires v{d}+", .{ g.version, min_xkb_bindings_version });
                     return;
                 }
-                globals.xkb_bindings = registry.bind(
-                    g.name,
-                    river.XkbBindingsV1,
-                    @min(g.version, river.XkbBindingsV1.generated_version),
-                ) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, river.LayerShellV1.interface.name) == .eq) {
-                globals.layer_shell = registry.bind(g.name, river.LayerShellV1, 1) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, zwlr.OutputManagerV1.interface.name) == .eq) {
+                c.xkb_bindings = registry.bind(g.name, river.XkbBindingsV1, capped(g, river.XkbBindingsV1)) catch return;
+            } else if (is(g, river.LayerShellV1)) {
+                c.layer_shell = registry.bind(g.name, river.LayerShellV1, 1) catch return;
+            } else if (is(g, zwlr.OutputManagerV1)) {
                 globals.output_manager = registry.bind(g.name, zwlr.OutputManagerV1, 1) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, zwlr.GammaControlManagerV1.interface.name) == .eq) {
+            } else if (is(g, zwlr.GammaControlManagerV1)) {
                 globals.gamma_manager = registry.bind(g.name, zwlr.GammaControlManagerV1, 1) catch return;
-            } else if (std.mem.orderZ(u8, g.interface, river.InputManagerV1.interface.name) == .eq) {
-                globals.input_manager = registry.bind(
-                    g.name,
-                    river.InputManagerV1,
-                    @min(g.version, river.InputManagerV1.generated_version),
-                ) catch return;
+            } else if (is(g, river.InputManagerV1)) {
+                globals.input_manager = registry.bind(g.name, river.InputManagerV1, capped(g, river.InputManagerV1)) catch return;
             }
         },
         // A global went away. We don't track hot-pluggable registry globals, so
         // there is nothing to tear down here.
         .global_remove => {},
     }
+}
+
+/// Whether global `g` advertises interface `T`. `orderZ(...) == .eq` is the
+/// null-terminated string compare zig-wayland expects here.
+fn is(g: anytype, comptime T: type) bool {
+    return std.mem.orderZ(u8, g.interface, T.interface.name) == .eq;
+}
+
+/// Bind version for `T`: what the server advertises, capped at what we generated.
+fn capped(g: anytype, comptime T: type) u32 {
+    return @min(g.version, T.generated_version);
 }
 
 // `zig test` only collects the tests in the ROOT file, so every test living in
