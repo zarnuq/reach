@@ -35,7 +35,7 @@ pub fn reapply() void {
     for (devices.items) |dev| dev.setRepeatInfo(config.repeat_rate, config.repeat_delay);
 }
 
-fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, _: ?*anyopaque) void {
+fn managerListener(mgr: *river.InputManagerV1, event: river.InputManagerV1.Event, _: ?*anyopaque) void {
     switch (event) {
         .input_device => |ev| {
             // Apply to every device unconditionally — the compositor ignores
@@ -46,9 +46,13 @@ fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, 
             devices.append(Context.get().gpa, ev.id) catch
                 log.warn("out of memory; device won't follow repeat changes on reload", .{});
         },
-        // Compositor is done with us; the object is destroyed by the library.
-        // Stop pushing repeat info to devices of a finished manager.
-        .finished => devices.clearRetainingCapacity(),
+        // No more events on the manager; the protocol leaves destroying it, and
+        // the devices it announced, to us.
+        .finished => {
+            for (devices.items) |dev| dev.destroy();
+            devices.clearRetainingCapacity();
+            mgr.destroy();
+        },
     }
 }
 

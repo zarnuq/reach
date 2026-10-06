@@ -78,8 +78,13 @@ fn addHead(rwm: *zwlr.OutputHeadV1) void {
     const ctx = Context.get();
     const h = ctx.gpa.create(Head) catch return;
     h.* = .{ .rwm = rwm };
+    heads.append(ctx.gpa, h) catch {
+        log.err("out of memory tracking an output head; monitor config may be rejected", .{});
+        rwm.destroy();
+        ctx.gpa.destroy(h);
+        return;
+    };
     rwm.setListener(*Head, headListener, h);
-    heads.append(ctx.gpa, h) catch {};
     need_apply = true; // a new head (startup batch or hotplug) → (re)apply
 }
 
