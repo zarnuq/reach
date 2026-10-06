@@ -69,10 +69,6 @@ pub fn run(display: *wl.Display) !void {
             return err;
         };
 
-        if (fds[0].revents & std.posix.POLL.IN != 0) {
-            if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
-        }
-
         var dirty = false;
         // `kill -HUP $(pidof reach)` reloads config.zon. Like every other reload
         // trigger it only sets the request; manageDirty gets us the manage cycle
@@ -104,6 +100,13 @@ pub fn run(display: *wl.Display) !void {
             }
         }
         if (ipc_slot) |s| if (fds[s].revents & std.posix.POLL.IN != 0) ipc.onAccept();
+
+        // Wayland LAST: dispatch can run a manage/render cycle that reloads shake
+        // (new device and timer fds) or drops ipc clients, which would leave the
+        // slot indices above pointing at the wrong fds.
+        if (fds[0].revents & std.posix.POLL.IN != 0) {
+            if (display.dispatch() != .SUCCESS) return error.DispatchFailed;
+        }
 
         if (dirty) ctx.rwm.manageDirty();
     }

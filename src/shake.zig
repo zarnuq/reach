@@ -230,7 +230,7 @@ pub fn start() void {
         return;
     }
 
-    const tfd = linux.timerfd_create(.MONOTONIC, .{ .CLOEXEC = true });
+    const tfd = linux.timerfd_create(.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true });
     if (linux.errno(tfd) != .SUCCESS) {
         log.warn("timerfd_create failed: errno {} — shake disabled", .{linux.errno(tfd)});
         return;
