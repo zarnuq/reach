@@ -200,10 +200,9 @@ pub const Output = struct {
                 for (ctx.windows.items) |w| {
                     if (w.output == self) w.output = fallback;
                 }
-                // Don't leave the selection (or pointer target) dangling at a
-                // freed output; fall back to whatever monitor remains.
+                // Don't leave the selection dangling at a freed output; fall back
+                // to whatever monitor remains.
                 if (ctx.current_output == self) ctx.current_output = fallback;
-                if (ctx.pointer_output == self) ctx.pointer_output = fallback;
                 // Force the manage cycle to re-apply set_default to the fallback
                 // (the protocol leaves the default undefined once ours is gone).
                 if (ctx.layer_default == self) ctx.layer_default = null;

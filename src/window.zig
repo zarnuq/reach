@@ -115,9 +115,9 @@ pub const Window = struct {
 
         // Place the window on the selected monitor (dwl spawns on `selmon`), so
         // apps launched by a keybind appear where the keyboard focus is — not on
-        // whatever output happens to be first (DP-1). Fall back to the pointer's
-        // output, then the focused window's output, then the first.
-        const out = ctx.current_output orelse ctx.pointer_output orelse query.selectedOutput();
+        // whatever output happens to be first (DP-1). Null only while there are no
+        // outputs; Output.create re-homes the window when one appears.
+        const out = ctx.current_output;
         self.output = out;
 
         // New windows land on the desktop the output is currently viewing

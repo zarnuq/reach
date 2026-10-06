@@ -65,13 +65,13 @@ pub fn execute(action: Action) void {
         // it. 0 is never a valid desktop (see config.desktops).
         .view => |d| {
             if (!config.validDesktop(d)) return;
-            const out = query.selectedOutput() orelse return;
+            const out = ctx.current_output orelse return;
             out.desktop = d;
             refocus(out);
         },
         .send => |d| {
             if (!config.validDesktop(d)) return;
-            const out = query.selectedOutput() orelse return;
+            const out = ctx.current_output orelse return;
             if (ctx.focused) |f| {
                 f.desktop = d;
                 refocus(out);
@@ -121,11 +121,11 @@ pub fn execute(action: Action) void {
             ctx.warp_pending = true;
         },
         .setmfact => |delta| {
-            if (query.selectedOutput()) |out| out.mfact = @max(0.1, @min(0.9, out.mfact + delta));
+            if (ctx.current_output) |out| out.mfact = @max(0.1, @min(0.9, out.mfact + delta));
             ctx.warp_pending = true;
         },
         .incnmaster => |delta| {
-            if (query.selectedOutput()) |out| out.nmaster = @max(0, out.nmaster + delta);
+            if (ctx.current_output) |out| out.nmaster = @max(0, out.nmaster + delta);
             ctx.warp_pending = true;
         },
         .focusmon => |dir| {
@@ -163,7 +163,7 @@ fn promoteToMaster(w: *Window) void {
 
 fn focusStack(dir: i32) void {
     const ctx = Context.get();
-    const out = query.selectedOutput() orelse return;
+    const out = ctx.current_output orelse return;
     const cur = ctx.focused orelse return;
 
     ctx.focused = nextFocusable(ctx.windows.items, out, cur, dir) orelse return;
@@ -257,11 +257,10 @@ fn adjacentOutput(out: *Output, dir: i32) ?*Output {
 /// clears) so you can switch to a bare monitor and spawn onto it.
 fn focusMonitor(dir: i32) void {
     const ctx = Context.get();
-    const cur = query.selectedOutput() orelse return;
+    const cur = ctx.current_output orelse return;
     const next_out = adjacentOutput(cur, dir) orelse return;
 
     ctx.current_output = next_out;
-    ctx.pointer_output = next_out;
     ctx.focused = query.topVisibleOn(next_out);
 }
 
@@ -273,7 +272,7 @@ fn focusMonitor(dir: i32) void {
 /// current monitor.
 fn sendToMonitor(dir: i32) void {
     const ctx = Context.get();
-    const cur = query.selectedOutput() orelse return;
+    const cur = ctx.current_output orelse return;
     const next_out = adjacentOutput(cur, dir) orelse return;
     const w = ctx.focused orelse return;
 

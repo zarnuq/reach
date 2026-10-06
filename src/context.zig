@@ -70,14 +70,13 @@ pub const Context = struct {
     // uses a single primary seat; per-seat focus is a possible future refinement.
     focused: ?*Window = null,
     primary_seat: ?*Seat = null,
-    pointer_output: ?*Output = null, // output the pointer is over (spawn target)
 
     // The selected output — dwl's `selmon`. This is the single source of truth
     // for "which monitor is active": desktop/layout keybindings act on it and the
     // state socket reports it as the focused output. Updated on click-to-focus,
-    // new windows, and `focusmon`. Kept distinct from `pointer_output` so
-    // keyboard-driven focus and mouse position can differ without the two
-    // disagreeing about the target.
+    // new windows, and `focusmon`. Invariant: null only while there are no
+    // outputs — Output.create sets it if unset and removal moves it to a
+    // surviving output — so callers need no fallback.
     current_output: ?*Output = null,
 
     // The output we last told river is the default for new layer surfaces (rofi,

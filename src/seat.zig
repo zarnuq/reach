@@ -44,12 +44,11 @@ pub const Seat = struct {
     fn listener(_: *river.SeatV1, event: river.SeatV1.Event, self: *Seat) void {
         const ctx = Context.get();
         switch (event) {
-            // Pointer moved onto a window. Always track its output (spawn target);
-            // with sloppy focus, also focus the window and select its monitor so
-            // a panel's highlight and the desktop keys follow the mouse.
+            // Pointer moved onto a window. With sloppy focus, focus the window and
+            // select its monitor so a panel's highlight and the desktop keys
+            // follow the mouse.
             .pointer_enter => |ev| {
                 const w = query.windowFor(ev.window) orelse return;
-                ctx.pointer_output = w.output;
                 if (config.sloppy_focus and ctx.focused != w) {
                     ctx.focus(w);
                     // Focus is applied in the manage cycle; ask for one.
@@ -73,7 +72,6 @@ pub const Seat = struct {
             // on the same beat rather than live under a motionless session.
             .pointer_position => |ev| {
                 const out = query.outputAt(ev.x, ev.y) orelse return;
-                ctx.pointer_output = out;
                 // Only the OUTPUT selection, never `ctx.focused`: there is no
                 // window under the pointer to focus, and stealing the keyboard
                 // away from the one you were typing in is not what crossing a
@@ -84,7 +82,6 @@ pub const Seat = struct {
             // Click-to-focus. Clicking a window also selects its monitor (selmon).
             .window_interaction => |ev| {
                 const w = query.windowFor(ev.window) orelse return;
-                ctx.pointer_output = w.output;
                 ctx.focus(w);
             },
 

@@ -70,17 +70,3 @@ pub fn outputAt(x: i32, y: i32) ?*Output {
     }
     return null;
 }
-
-/// The output the user is driving — dwl's `selmon`. The desktop and layout actions
-/// act on it and the state socket reports it as focused, so it must be ONE answer.
-///
-/// `current_output` is the real answer and is set as soon as any output appears;
-/// the rest is fallback for the window between startup and that first event.
-pub fn selectedOutput() ?*Output {
-    const ctx = Context.get();
-    if (ctx.current_output) |o| return o;
-    if (ctx.focused) |f| {
-        if (f.output) |o| return o;
-    }
-    return if (ctx.outputs.items.len > 0) ctx.outputs.items[0] else null;
-}

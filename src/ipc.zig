@@ -1,7 +1,7 @@
 // ipc.zig — the state socket: what a bar needs, for a bar that isn't ours.
 //
 // reach draws no bar. A panel inside the window manager could read its state
-// directly — query.selectedOutput(), out.desktop, query.topVisibleOn() are plain
+// directly — ctx.current_output, out.desktop, query.topVisibleOn() are plain
 // reads of the Context — but an external one (a layer-shell client such as
 // quickshell) has no such access: river is non-monolithic, so reach IS the window
 // manager and there is no compositor-side workspace protocol for a bar to bind.
@@ -22,7 +22,7 @@
 // DELIBERATELY WRITE-ONLY. Client fds are polled and read only to notice a
 // disconnect (a closed socket reads EOF); bytes sent to us are discarded. A
 // command like "view 3" for a clickable desktop cell would have to name the
-// output too — action.view acts on query.selectedOutput(), so a click on an
+// output too — action.view acts on ctx.current_output, so a click on an
 // unfocused monitor's bar would switch the focused one — and moving the
 // selection is a focus-semantics decision, not something a status socket should
 // make on its own. A panel that wants to act on the WM has keybinds and `spawn`.
@@ -196,7 +196,7 @@ fn socketPath(buf: []u8) ?[:0]const u8 {
 /// promote it to `snapshot`. Returns whether it changed.
 fn compose() bool {
     const ctx = Context.get();
-    const selected = query.selectedOutput();
+    const selected = ctx.current_output;
     var out = Writer{ .buf = &scratch };
 
     // Brightness rides the same snapshot as everything else: it changes inside a
