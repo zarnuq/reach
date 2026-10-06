@@ -164,9 +164,8 @@ test "the shipped example config parses" {
     // catches.
     var ar: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer ar.deinit();
-    @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
-    _ = std.zon.parse.fromSliceAlloc(FileConfig, ar.allocator(), @embedFile("config.example"), &diag, .{}) catch |err| {
+    _ = parseZon(FileConfig, ar.allocator(), @embedFile("config.example"), &diag) catch |err| {
         std.debug.print("config.example.zon: {}\n{f}\n", .{ err, diag });
         return err;
     };
@@ -178,15 +177,14 @@ test "the shipped example monitors file parses" {
     // apply NOTHING — so a typo in this file would cost a user their keybinds too.
     var ar: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer ar.deinit();
-    @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
-    const mf = std.zon.parse.fromSliceAlloc(MonitorFile, ar.allocator(), @embedFile("monitors.example"), &diag, .{}) catch |err| {
+    const mf = parseZon(MonitorFile, ar.allocator(), @embedFile("monitors.example"), &diag) catch |err| {
         std.debug.print("monitors.example.zon: {}\n{f}\n", .{ err, diag });
         return err;
     };
 
-    // An example that lists nothing would be ignored at runtime (see `commit`),
-    // so it would document a file that does not work.
+    // An example that lists nothing would blank the layout at runtime (`commit`
+    // applies an empty list as-is), so it would document no layout at all.
     if (mf.monitors.len == 0) return error.ExampleListsNoOutputs;
 }
 
@@ -201,12 +199,11 @@ pub var binds: ?[]const KeySpec = null;
 /// destroyed by `release`, never before the new one is committed.
 var arena: ?*std.heap.ArenaAllocator = null;
 
-/// config.zig's compiled-in values, captured before the first overlay. Re-applied
-/// ahead of every reload so a field dropped from config.zon returns to its default
-/// rather than keeping the previous run's override. Every field is non-null after
-/// `snapshotDefaults`, so `overlay(defaults)` is a full reset.
-var defaults: FileConfig = .{};
-var defaults_taken = false;
+/// config.zig's compiled-in values, captured on the first `commit` before any
+/// overlay. Re-applied ahead of every reload so a field dropped from config.zon
+/// returns to its default rather than keeping the previous run's override. Every
+/// field is non-null once taken, so `overlay(defaults)` is a full reset.
+var defaults: ?FileConfig = null;
 
 /// A parsed-but-not-yet-applied config plus the arena backing it. Both files share
 /// ONE arena: they are read together, committed together and freed together, so
@@ -215,7 +212,7 @@ pub const Staged = struct {
     fc: FileConfig,
     /// Null when there is no monitors.zon — not when it failed to parse, which
     /// fails the whole stage instead (see `stage`).
-    mf: ?MonitorFile = null,
+    mf: ?MonitorFile,
     arena: *std.heap.ArenaAllocator,
 };
 
@@ -284,11 +281,8 @@ fn parseFile(comptime T: type, aa: std.mem.Allocator, path: [:0]const u8) ?T {
         return null;
     };
 
-    // The ZON parser inline-unrolls over every field at comptime; each new field
-    // costs branches, so lift the quota above the default 1000.
-    @setEvalBranchQuota(4000);
     var diag: std.zon.parse.Diagnostics = .{};
-    const parsed = std.zon.parse.fromSliceAlloc(T, aa, source, &diag, .{}) catch |err| {
+    const parsed = parseZon(T, aa, source, &diag) catch |err| {
         log.err("{s} parse failed ({}):\n{f}", .{ path, err, diag });
         log.warn("keeping current config", .{});
         return null;
@@ -296,6 +290,14 @@ fn parseFile(comptime T: type, aa: std.mem.Allocator, path: [:0]const u8) ?T {
 
     log.info("parsed config from {s}", .{path});
     return parsed;
+}
+
+/// std.zon.parse.fromSliceAlloc with the eval quota it needs: the parser
+/// inline-unrolls over every field at comptime and each new field costs
+/// branches, so lift the quota above the default 1000.
+fn parseZon(comptime T: type, aa: std.mem.Allocator, source: [:0]const u8, diag: *std.zon.parse.Diagnostics) !T {
+    @setEvalBranchQuota(4000);
+    return std.zon.parse.fromSliceAlloc(T, aa, source, diag, .{});
 }
 
 /// Point config.zig at `staged`, returning the arena it displaces (null on the
@@ -306,7 +308,7 @@ pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
     // Idempotent, and this is the only place an overlay can happen — so taking the
     // snapshot here means the defaults are always captured pristine, with no
     // ordering requirement on the caller.
-    snapshotDefaults();
+    if (defaults == null) defaults = mirror(FileConfig, config);
 
     const previous = arena;
     arena = staged.arena;
@@ -317,7 +319,7 @@ pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
     // didn't mention this" is encoded), but null is precisely the reset value
     // here — it means "fall back to the compiled-in keymap".
     binds = null;
-    overlay(config, defaults);
+    overlay(config, defaults.?);
     overlay(config, staged.fc);
     // monitors.zon LAST, so the dedicated file wins over a `.monitors` block left
     // behind in config.zon rather than racing it.
@@ -339,14 +341,6 @@ pub fn release(gpa: std.mem.Allocator, old: ?*std.heap.ArenaAllocator) void {
     const ar = old orelse return;
     ar.deinit();
     gpa.destroy(ar);
-}
-
-/// Capture config.zig's compiled-in values into `defaults` (once, on the first
-/// commit, before anything overlays them).
-fn snapshotDefaults() void {
-    if (defaults_taken) return;
-    defaults_taken = true;
-    defaults = mirror(FileConfig, config);
 }
 
 // ---------------------------------------------------------------------------

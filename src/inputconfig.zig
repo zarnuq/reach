@@ -1,5 +1,4 @@
-// inputconfig.zig — apply keyboard repeat (and future input settings) via the
-// river-input-management protocol.
+// inputconfig.zig — apply keyboard repeat via the river-input-management protocol.
 //
 // dwl sets `repeat_rate`/`repeat_delay` on the keyboard directly because dwl is
 // the compositor. river's non-monolithic split puts input under the compositor,
@@ -21,11 +20,8 @@ const river = wayland.client.river;
 
 const config = @import("config.zig");
 
-var manager: ?*river.InputManagerV1 = null;
-
-/// Store the manager and start listening. Called from main once the global binds.
+/// Start listening on the manager. Called from main once the global binds.
 pub fn init(mgr: *river.InputManagerV1) void {
-    manager = mgr;
     mgr.setListener(?*anyopaque, managerListener, null);
 }
 
@@ -39,7 +35,7 @@ fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, 
             ev.id.setListener(?*anyopaque, deviceListener, null);
         },
         // Compositor is done with us; the object is destroyed by the library.
-        .finished => manager = null,
+        .finished => {},
     }
 }
 

@@ -1,6 +1,6 @@
 // config.zig — configuration: compiled-in DEFAULTS, optionally overlaid at startup.
 //
-// dwl-style values live here, but most are now `pub var` rather than `pub const`:
+// dwl-style values live here, but most are `pub var` rather than `pub const`:
 // they hold the compiled-in DEFAULT, and `confparse.zig` overlays any field the
 // user set in `config.zon` (see confparse.load, called once at startup before the
 // seat and outputs are configured). With no config file, these defaults are used
@@ -14,14 +14,14 @@
 // that correspondence by reflection, so a new setting is those two edits and
 // nothing else — a mismatch is a compile error, not a setting that never applies.
 
+const std = @import("std");
+
 /// Gap (px) between the tiled area and the output edge. 0 = windows extend all
 /// the way to the screen edge (dwl/tmux style — no outer border).
 pub var outer_gap: i32 = 0;
 
 /// Gap (px) between adjacent tiled windows — the seam the tmux border line fills.
-/// Keep this equal to `border_thickness` so the border fills the seam and the
-/// vertical/horizontal lines abut at junctions (no cut-off corners). Making it
-/// larger than the line would reopen corner gaps until line-extension is added.
+/// See `border_thickness` for how the line sits relative to this gap.
 pub var inner_gap: i32 = 2;
 
 /// Focus follows the mouse (dwl's `sloppyfocus`): moving the pointer onto a
@@ -74,15 +74,9 @@ pub const cursor = struct {
         pub var delay: u32 = 150;
 
         /// Run this when a shake is recognised — once per shake, re-arming only
-        /// after the motion stops. Empty = do nothing.
-        ///
-        /// A shake used to grow the cursor, which reach could do because it is
-        /// only a size (`set_xcursor_theme`) and needs no coordinates. Anything
-        /// DRAWN at the cursor is out of reach's hands twice over: it is river's
-        /// window-management client rather than the compositor, so it has no
-        /// surface to paint on, and — see shake.zig's header — it never learns
-        /// where the pointer is. So the gesture is detected here and handed to
-        /// whatever can map a surface.
+        /// after the motion stops. Empty = do nothing. reach has no surface of
+        /// its own and never learns where the pointer is (see shake.zig), so any
+        /// visual effect is left to whatever this runs.
         pub var command: [:0]const u8 = "";
     };
 };
@@ -164,6 +158,14 @@ pub const Monitor = struct {
 /// monitor numbering / focusmon (Super+,/.) navigation — reach sorts live outputs
 /// into that order (output.zig reorder).
 pub var monitors: []const Monitor = &[_]Monitor{};
+
+/// Index of the `monitors` entry named `name`, or null.
+pub fn monitorIndex(name: []const u8) ?usize {
+    for (monitors, 0..) |m, i| {
+        if (std.mem.eql(u8, m.name, name)) return i;
+    }
+    return null;
+}
 
 /// Number of windows in the master stack.
 pub var nmaster: i32 = 1;

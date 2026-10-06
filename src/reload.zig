@@ -16,7 +16,7 @@
 //      same trick the chord submaps already use, for the same reason.
 //
 //   2. THE OLD ARENA OUTLIVES ITS READERS. Config slices are not copied: rules,
-//      blocks, monitor lists and `Action.spawn` strings all point directly into
+//      monitor lists and `Action.spawn` strings all point directly into
 //      the parsed ZON AST (see confparse.zig). So the outgoing generation can
 //      only be freed once every one of those readers has been rebuilt against
 //      the new one. That is why teardown comes before commit, and release comes
@@ -143,15 +143,24 @@ fn cursorEql(a: CursorSettings, b: CursorSettings) bool {
     return a.size == b.size and a.enabled == b.enabled and std.mem.eql(u8, a.theme, b.theme);
 }
 
-/// Same reasoning as cursorEql: `Monitor.name` is a slice, so this compares the
-/// names by content rather than by address.
+/// Same reasoning as cursorEql: `Monitor.name` is a slice, so compare it by
+/// content, then alias it so std.meta.eql handles the value-only rest.
 fn monitorsEql(a: []const config.Monitor, b: []const config.Monitor) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
         if (!std.mem.eql(u8, x.name, y.name)) return false;
-        if (x.w != y.w or x.h != y.h or x.refresh != y.refresh) return false;
-        if (x.x != y.x or x.y != y.y) return false;
-        if (x.scale != y.scale or x.transform != y.transform) return false;
+        var y2 = y;
+        y2.name = x.name;
+        if (!std.meta.eql(x, y2)) return false;
     }
     return true;
+}
+
+test "monitorsEql compares names by content and every other field" {
+    var buf = "DP-1".*;
+    const a = [_]config.Monitor{.{ .name = "DP-1", .w = 1920, .h = 1080 }};
+    var b = [_]config.Monitor{.{ .name = &buf, .w = 1920, .h = 1080 }};
+    try std.testing.expect(monitorsEql(&a, &b));
+    b[0].scale = 2.0;
+    try std.testing.expect(!monitorsEql(&a, &b));
 }

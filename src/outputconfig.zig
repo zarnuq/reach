@@ -4,8 +4,8 @@
 // output geometry to us; it can't set modes/positions/transforms. That belongs to
 // the standard wlroots `zwlr_output_manager_v1` protocol (which river implements).
 // This module is reach's equivalent of dwl's `createmon`/monrules: it learns the
-// available heads + modes, then applies our desired configuration once at startup
-// (and again on hotplug).
+// available heads + modes, then applies our desired configuration at startup,
+// again on hotplug, and on a config reload that changes monitors (`reapply`).
 //
 // Protocol flow:
 //   manager.head        -> a head (output) appeared; collect its modes
@@ -182,11 +182,8 @@ fn configListener(conf: *zwlr.OutputConfigurationV1, event: zwlr.OutputConfigura
 
 /// The config.monitors entry whose name equals `name`, or null.
 fn matchMonitor(name: ?[:0]const u8) ?*const config.Monitor {
-    const n = name orelse return null;
-    for (config.monitors) |*mon| {
-        if (std.mem.eql(u8, mon.name, n)) return mon;
-    }
-    return null;
+    const i = config.monitorIndex(name orelse return null) orelse return null;
+    return &config.monitors[i];
 }
 
 /// Best mode on `h` matching the requested resolution: exact refresh if asked for,
