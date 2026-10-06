@@ -1,26 +1,8 @@
-// action.zig — what the window manager can be asked to do, and the doing of it.
+// action.zig — what the window manager can be asked to do (Action), and the doing of it.
 //
-// An Action is a verb: view a desktop, send the focused window somewhere, adjust
-// the layout, spawn a program. `execute` performs one, and the helpers below it are
-// the window-manager operations those verbs are made of.
-//
-// SEPARATE FROM binding.zig on purpose. These operations are not about keyboards.
-// They lived inside the keybinding module because keys were the only thing that
-// triggered them, which made "what the WM can do" reachable only through "how a key
-// is bound" — a 828-line file where the two were interleaved. Anything else that
-// wants to drive the WM (a bar's desktop click, an IPC socket) needs exactly this
-// half and none of the xkb plumbing.
-//
-// The dependency runs in one direction: binding.zig maps keys to an Action and
-// calls `execute`. Keyboard-only state such as chord submaps stays in binding.zig,
-// so actions can also be used by future inputs such as bar clicks or IPC without
-// depending on xkb plumbing.
-//
-// TIMING, and why almost nothing here defers: river guarantees a `pressed` event is
-// followed by a manage_start, so mutating state in an action is enough — the layout
-// and render re-run on their own. The exceptions are the two things that must
-// happen inside a specific sequence and so only get *requested* here: a config
-// reload (reload.request) and a cursor warp (requestWarp).
+// Actions mutate state directly: river follows every `pressed` with a manage_start,
+// so layout/render re-run on their own. Only a config reload and a cursor warp
+// (ctx.warp_pending) are deferred to the manage cycle.
 
 const std = @import("std");
 
@@ -61,9 +43,7 @@ pub const Action = union(enum) {
     // Screen brightness, as a signed percentage step applied to every output at
     // once (gamma.zig). Clamped to a floor so a bind can't black the screen out.
     brightness: i32,
-    // Re-read config.zon and rebuild everything it drives (reload.zig). Deferred
-    // to the next manage cycle — running it here would free this very Binding
-    // while its listener is still on the stack.
+    // Re-read config.zon (deferred; see reload.zig).
     reload,
 };
 
@@ -101,9 +81,7 @@ pub fn execute(action: Action) void {
         .spawn => |cmd| spawn(cmd),
         // Dim/undim every output. In-process: no subprocess, no bus round trip.
         .brightness => |d| gamma.step(d),
-        // Re-read config.zon. Only *requests* the reload; reload.apply() runs it
-        // from the manage cycle that river guarantees follows this press, by
-        // which point this Binding is no longer on the stack and can be freed.
+        // Deferred; see reload.zig.
         .reload => reload.request(),
         // Window management
         .quit => {
@@ -118,7 +96,7 @@ pub fn execute(action: Action) void {
         .killclient => if (ctx.focused) |f| f.rwm.close(),
         .zoom => {
             if (ctx.focused) |f| promoteToMaster(f);
-            requestWarp();
+            ctx.warp_pending = true;
         },
         .togglefloating => {
             if (ctx.focused) |f| {
@@ -140,19 +118,19 @@ pub fn execute(action: Action) void {
         // selection, so warp the pointer to follow (dwl warpcursor).
         .focusstack => |dir| {
             focusStack(dir);
-            requestWarp();
+            ctx.warp_pending = true;
         },
         .setmfact => |delta| {
-            adjustMfact(delta);
-            requestWarp();
+            if (query.selectedOutput()) |out| out.mfact = @max(0.1, @min(0.9, out.mfact + delta));
+            ctx.warp_pending = true;
         },
         .incnmaster => |delta| {
-            adjustNmaster(delta);
-            requestWarp();
+            if (query.selectedOutput()) |out| out.nmaster = @max(0, out.nmaster + delta);
+            ctx.warp_pending = true;
         },
         .focusmon => |dir| {
             focusMonitor(dir);
-            requestWarp();
+            ctx.warp_pending = true;
         },
         // Moves the focused WINDOW to the adjacent monitor. Unlike focusmon, the
         // selection (and pointer) stay put — moving a window shouldn't yank the
@@ -167,7 +145,7 @@ pub fn execute(action: Action) void {
 
 /// Whether `d` names a real desktop. Desktops are 1-based, so 0 is always
 /// invalid; the upper bound is `config.desktops.count`.
-fn validDesktop(d: u32) bool {
+pub fn validDesktop(d: u32) bool {
     return d >= 1 and d <= config.desktops.count;
 }
 
@@ -209,26 +187,12 @@ fn focusStack(dir: i32) void {
 /// windows deliberately share one cycle: focus is independent of layout mode,
 /// and stack.apply() raises a floating window when it becomes focused.
 fn nextFocusable(windows: []const *Window, out: *Output, cur: *Window, dir: i32) ?*Window {
-    var current_index: ?usize = null;
-    for (windows, 0..) |w, i| {
-        if (w == cur and w.output == out and w.visible()) {
-            current_index = i;
-            break;
-        }
-    }
-
-    var index = current_index orelse return null;
-    var remaining = windows.len - 1;
-    while (remaining > 0) : (remaining -= 1) {
-        index = if (dir > 0)
-            (index + 1) % windows.len
-        else if (index == 0)
-            windows.len - 1
-        else
-            index - 1;
-
-        const candidate = windows[index];
-        if (candidate.output == out and candidate.visible()) return candidate;
+    if (cur.output != out or !cur.visible()) return null;
+    const n = windows.len;
+    var i = std.mem.indexOfScalar(*Window, windows, cur) orelse return null;
+    for (1..n) |_| {
+        i = if (dir > 0) (i + 1) % n else (i + n - 1) % n;
+        if (windows[i].output == out and windows[i].visible()) return windows[i];
     }
     return null;
 }
@@ -261,25 +225,19 @@ test "focus cycling skips windows that are not visible on the selected output" {
     try std.testing.expectEqual(&target, nextFocusable(&windows, &out, &current, -1).?);
 }
 
-fn adjustMfact(delta: f32) void {
-    const out = query.selectedOutput() orelse return;
-    const new = @max(0.1, @min(0.9, out.mfact + delta));
-    out.mfact = new;
-}
-
-fn adjustNmaster(delta: i32) void {
-    const out = query.selectedOutput() orelse return;
-    out.nmaster = @max(0, out.nmaster + delta);
+/// The focused window if it is floating, not fullscreen, and on an output.
+fn focusedFloating() ?*Window {
+    const f = Context.get().focused orelse return null;
+    if (!f.floating or f.fullscreen or f.output == null) return null;
+    return f;
 }
 
 /// Move the focused floating window by (dx,dy), keeping it on its output. No-op for
 /// tiled/fullscreen windows. float_placed is already set, so placeFloating leaves
 /// the new position alone.
 fn moveFloating(dx: i32, dy: i32) void {
-    const ctx = Context.get();
-    const f = ctx.focused orelse return;
-    if (!f.floating or f.fullscreen) return;
-    const o = f.output orelse return;
+    const f = focusedFloating() orelse return;
+    const o = f.output.?;
     f.x = std.math.clamp(f.x + dx, 0, @max(0, o.width - f.width));
     f.y = std.math.clamp(f.y + dy, 0, @max(0, o.height - f.height));
 }
@@ -288,10 +246,8 @@ fn moveFloating(dx: i32, dy: i32) void {
 /// (and a small floor) and the output bounds, then nudge it back on-screen if it
 /// grew past an edge.
 fn resizeFloating(dw: i32, dh: i32) void {
-    const ctx = Context.get();
-    const f = ctx.focused orelse return;
-    if (!f.floating or f.fullscreen) return;
-    const o = f.output orelse return;
+    const f = focusedFloating() orelse return;
+    const o = f.output.?;
     const min_w = @max(@as(i32, 40), f.min_width);
     const min_h = @max(@as(i32, 40), f.min_height);
     f.width = std.math.clamp(f.width + dw, min_w, o.width);
@@ -342,12 +298,6 @@ fn sendToMonitor(dir: i32) void {
 // ---------------------------------------------------------------------------
 // Cursor warp (dwl warpcursor)
 // ---------------------------------------------------------------------------
-
-/// Ask to warp the pointer onto the focused window on the next manage cycle.
-/// Runs inside a guaranteed manage sequence (binding press → manage_start).
-fn requestWarp() void {
-    Context.get().warp_pending = true;
-}
 
 /// Warp the pointer to the center of the focused window (or the selected output
 /// if nothing is focused). MUST be called from a manage sequence — pointer_warp
