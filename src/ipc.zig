@@ -29,6 +29,7 @@
 
 const std = @import("std");
 const linux = std.os.linux;
+const action = @import("action.zig");
 const binding = @import("binding.zig");
 const log = std.log.scoped(.ipc);
 
@@ -213,10 +214,10 @@ fn compose() bool {
         if (i != 0) out.raw(",");
         out.raw("{\"name\":");
         out.string(if (o.name) |n| n else "");
-        out.print(",\"desktop\":{d},\"focused\":{s},\"fullscreen\":{s},\"occupied\":[", .{
+        out.print(",\"desktop\":{d},\"focused\":{},\"fullscreen\":{},\"occupied\":[", .{
             o.desktop,
-            if (selected == o) "true" else "false",
-            if (query.fullscreenOn(o)) "true" else "false",
+            selected == o,
+            query.fullscreenOn(o),
         });
 
         // Which desktops hold a window on this output — the bar's occupied dots.
@@ -224,7 +225,7 @@ fn compose() bool {
         // opens an app on an unviewed desktop lights its cell up.
         var occupied = [_]bool{false} ** config.desktops.count;
         for (ctx.windows.items) |w| {
-            if (w.output == o and w.desktop >= 1 and w.desktop <= config.desktops.count) {
+            if (w.output == o and action.validDesktop(w.desktop)) {
                 occupied[w.desktop - 1] = true;
             }
         }

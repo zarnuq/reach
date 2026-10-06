@@ -1,28 +1,4 @@
-// query.zig — the predicates over the managed world, defined once.
-//
-// These are the questions several subsystems ask about the same state: which
-// windows take part in an output's tiling, which window is on top there, which
-// output the user is driving. They live here because every one of them had drifted
-// into two disagreeing copies:
-//
-//   * `tiledOn` existed in border.zig as "not floating and visible()" while
-//     layout.zig gathered "not floating, not fullscreen, on this desktop". Border
-//     geometry is computed by INDEXING into the layout's sequence, so the two sets
-//     disagreeing meant a non-focused fullscreen window shifted every border line
-//     onto the wrong gutter. border.zig's own comment insisted the two passes
-//     "have to agree on this exactly" — which is exactly the kind of invariant a
-//     comment cannot enforce and a shared function can.
-//
-//   * `selectedOutput` existed as bar.currentOutput (current → focused's output →
-//     sole output) and binding.focusedOutput (current → outputs[0]) — bar.zig was
-//     reach's since-removed built-in bar. Its comment claimed they were "the same
-//     value"; with `current_output` unset and two monitors they named different
-//     ones, so the bar highlighted one monitor while the desktop keys acted on
-//     another.
-//
-//   * `topVisibleOn` was byte-identical in binding.zig and bar.zig.
-//
-// Nothing here allocates or mutates; these are pure reads of the Context.
+// query.zig — shared read-only predicates over the Context, defined once so callers can't disagree.
 
 const wayland = @import("wayland");
 const river = wayland.client.river;

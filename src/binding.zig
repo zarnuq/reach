@@ -1,9 +1,4 @@
-// binding.zig — xkb keybindings: turning key presses into actions.
-//
-// Strictly the KEY half. What an action then does lives in action.zig; this file
-// only decides which action a given key means and hands it over. The two were one
-// 828-line file, which made every window-manager operation reachable only through
-// the keybinding machinery — see action.zig's header for why that mattered.
+// binding.zig — xkb keybindings: maps key presses to action.zig Actions.
 //
 // river hands keybindings to the WM via river_xkb_bindings_v1: we create a
 // binding for (seat, keysym, modifiers), `enable()` it during a manage sequence,
@@ -47,10 +42,9 @@ const action = @import("action.zig");
 extern fn xkb_keysym_from_name(name: [*:0]const u8, flags: u32) u32;
 fn resolveKeysym(name: []const u8) ?u32 {
     var buf: [64]u8 = undefined;
-    if (name.len == 0 or name.len >= buf.len) return null;
-    @memcpy(buf[0..name.len], name);
-    buf[name.len] = 0;
-    const ks = xkb_keysym_from_name(buf[0..name.len :0].ptr, 0);
+    if (name.len == 0) return null;
+    const z = std.fmt.bufPrintZ(&buf, "{s}", .{name}) catch return null;
+    const ks = xkb_keysym_from_name(z.ptr, 0);
     return if (ks == 0) null else ks; // 0 == XKB_KEY_NoSymbol
 }
 
@@ -82,14 +76,15 @@ pub const Binding = struct {
     fn listener(_: *river.XkbBindingV1, event: river.XkbBindingV1.Event, self: *Binding) void {
         switch (event) {
             .pressed => switch (self.target) {
-                .submap => |chord| requestSubmapEnter(chord),
+                // Arm/close submaps on the manage cycle river guarantees follows a press.
+                .submap => |chord| pending_enter = chord,
                 .action => |act| {
                     // Read before executing, so nothing touches `self` once the
                     // action has run: one that tore bindings down synchronously
                     // would otherwise make this a use-after-free.
                     const in_chord = self.in_chord;
                     action.execute(act);
-                    if (in_chord) requestSubmapExit();
+                    if (in_chord) pending_exit = true;
                 },
             },
             else => {},
@@ -189,8 +184,9 @@ pub fn registerForSeat(seat: *Seat) void {
     }
 
     // Desktop management. Desktop numbers are 1-based, so key '1' is desktop 1.
+    comptime std.debug.assert(config.desktops.count <= 9); // one digit key each
     var i: u32 = 0;
-    while (i < config.desktops.count and i < 9) : (i += 1) {
+    while (i < config.desktops.count) : (i += 1) {
         const d = i + 1;
         const digit: u32 = '1' + i;
         _ = add(xkb, seat, null, .{ .keysym = digit, .mods = MOD }, .{ .action = .{ .view = d } });
@@ -308,9 +304,7 @@ pub fn teardown() void {
     // An armed submap has live, ENABLED sub-bindings and river has been told to
     // eat the next key. Close it before anything is destroyed so we don't strand
     // the compositor waiting on a submap whose bindings no longer exist.
-    if (active_chord) |c| {
-        for (c.subs.items) |b| b.rwm.disable();
-    }
+    if (active_chord) |c| disableSubs(c);
     active_chord = null;
     pending_enter = null;
     pending_exit = false;
@@ -394,33 +388,23 @@ fn newChord() ?*Chord {
     return chord;
 }
 
-/// Ask to arm `chord`'s submap on the next manage cycle. Called from a leader's
-/// `pressed` handler — which the protocol guarantees is followed by a manage
-/// sequence, so no manageDirty is needed.
-fn requestSubmapEnter(chord: *Chord) void {
-    pending_enter = chord;
-}
-
-/// Ask to close the active submap on the next manage cycle (a sub fired, or an
-/// unbound key aborted it). Also runs inside a guaranteed manage sequence.
-fn requestSubmapExit() void {
-    pending_exit = true;
+fn disableSubs(c: *Chord) void {
+    for (c.subs.items) |b| b.rwm.disable();
 }
 
 /// Apply any pending submap open/close. MUST be called from a manage sequence
 /// (enable/disable and ensure_next_key_eaten are manage-only requests).
 pub fn applySubmap() void {
     if (pending_exit) {
-        if (active_chord) |c| {
-            for (c.subs.items) |b| b.rwm.disable();
-        }
+        if (active_chord) |c| disableSubs(c);
         active_chord = null;
         pending_exit = false;
     }
     if (pending_enter) |c| {
-        // Defensive: if a different submap were somehow still armed, close it.
+        // Descending into a nested chord: the parent submap is still armed, so
+        // close it before opening the child.
         if (active_chord) |old| {
-            if (old != c) for (old.subs.items) |b| b.rwm.disable();
+            if (old != c) disableSubs(old);
         }
         for (c.subs.items) |b| b.rwm.enable();
         // Eat the next key so a wrong second key aborts via ate_unbound_key
@@ -435,7 +419,7 @@ pub fn applySubmap() void {
 /// got a key that matched no sub-binding → abort the submap.
 fn seatListener(_: *river.XkbBindingsSeatV1, event: river.XkbBindingsSeatV1.Event, _: ?*anyopaque) void {
     switch (event) {
-        .ate_unbound_key => requestSubmapExit(),
+        .ate_unbound_key => pending_exit = true,
         // A manage+render cycle follows, and render publishes the new state.
         .modifiers_update => |m| mod_held = m.new.mod4,
     }
