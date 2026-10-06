@@ -58,8 +58,8 @@ var level: i32 = 100;
 const Control = struct {
     wl_output: *wl.Output,
     control: *zwlr.GammaControlV1,
+    /// Ramp entries per channel; 0 until usable, and forever after a refusal.
     size: u32 = 0,
-    dead: bool = false,
 };
 
 var controls: std.ArrayList(*Control) = .empty;
@@ -138,7 +138,6 @@ fn listener(_: *zwlr.GammaControlV1, event: zwlr.GammaControlV1.Event, self: *Co
         .gamma_size => |ev| {
             if (ev.size > max_ramp) {
                 log.warn("gamma ramp of {d} entries exceeds the {d} cap; leaving this output alone", .{ ev.size, max_ramp });
-                self.dead = true;
                 return;
             }
             self.size = ev.size;
@@ -152,7 +151,7 @@ fn listener(_: *zwlr.GammaControlV1, event: zwlr.GammaControlV1.Event, self: *Co
         // backends have no hardware ramp behind them. The second is why this
         // cannot be tested outside a real DRM session.
         .failed => {
-            self.dead = true;
+            self.size = 0;
             log.warn("gamma control refused for an output — another gamma client holding it " ++
                 "(wl-gammarelay-rs, wlsunset), or a backend with no gamma LUT (nested session)", .{});
         },
@@ -160,7 +159,7 @@ fn listener(_: *zwlr.GammaControlV1, event: zwlr.GammaControlV1.Event, self: *Co
 }
 
 fn apply(self: *Control) void {
-    if (self.dead or self.size < 2) return;
+    if (self.size < 2) return;
     const size: usize = self.size;
 
     fillRamp(
