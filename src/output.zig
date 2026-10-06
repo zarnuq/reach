@@ -15,6 +15,7 @@ const river = wayland.client.river;
 const Context = @import("context.zig");
 const config = @import("config.zig");
 const gamma = @import("gamma.zig");
+const replaceStr = @import("window.zig").replaceStr;
 
 /// An output-local rectangle.
 pub const Rect = struct { x: i32 = 0, y: i32 = 0, width: i32 = 0, height: i32 = 0 };
@@ -57,10 +58,6 @@ pub const Output = struct {
     mfact: f32 = 0.55,
     nmaster: i32 = 1,
 
-    // River window-management v5 reports active capture sessions per output.
-    // Kept as state for a future IPC privacy indicator.
-    capture_sessions: u32 = 0,
-
     // river_layer_shell_output_v1 handle for this monitor. We use it to mark the
     // selected output as the default for new layer surfaces (rofi etc.) so they
     // open on the focused monitor rather than river's fallback (the first output).
@@ -96,10 +93,13 @@ pub const Output = struct {
         return .{ .x = x, .y = y, .width = @max(0, w), .height = @max(0, h) };
     }
 
+    /// Wrap a new river output and track it. The first one becomes the selected
+    /// monitor.
     pub fn create(rwm: *river.OutputV1) !*Output {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Output);
         self.* = .{ .rwm = rwm, .mfact = configMfact(), .nmaster = configNmaster() };
+        errdefer self.destroy();
         rwm.setListener(*Output, listener, self);
 
         if (ctx.layer_shell) |ls| {
@@ -113,7 +113,29 @@ pub const Output = struct {
             if (self.layer_output) |lo| lo.setListener(*Output, layerOutputListener, self);
         }
 
+        try ctx.outputs.append(ctx.gpa, self);
+        // First monitor to appear is selected by default.
+        if (ctx.current_output == null) ctx.current_output = self;
+        // Re-home any windows orphaned by a total output blackout (e.g. all
+        // outputs were removed during a VT switch and are now reappearing).
+        for (ctx.windows.items) |w| {
+            if (w.output == null) w.output = self;
+        }
+        log.info("output created (total {d})", .{ctx.outputs.items.len});
         return self;
+    }
+
+    /// Release the proxies and memory. The caller has already untracked it.
+    fn destroy(self: *Output) void {
+        const gpa = Context.get().gpa;
+        if (self.layer_output) |lo| lo.destroy();
+        if (self.wl_output) |wo| {
+            gamma.detach(wo);
+            wo.destroy();
+        }
+        if (self.name) |n| gpa.free(n);
+        self.rwm.destroy();
+        gpa.destroy(self);
     }
 
     fn listener(_: *river.OutputV1, event: river.OutputV1.Event, self: *Output) void {
@@ -151,7 +173,7 @@ pub const Output = struct {
                 // commit. A no-op before the gamma size has arrived.
                 gamma.reapply();
             },
-            .capture_sessions => |ev| self.capture_sessions = ev.count,
+            .capture_sessions => {},
             // The numeric name of the wl_output global backing this output. Bind
             // it and listen for its connector-name event so we can order monitors
             // by config.monitors (and so window rules' `monitor` index is stable).
@@ -171,7 +193,7 @@ pub const Output = struct {
             // The monitor went away. Move its windows to a surviving output (so
             // they stay visible), drop ourselves from the list, and release the
             // proxy. If this is the last output, windows get null and will be
-            // re-homed when an output reappears (wm.zig output event handler).
+            // re-homed when an output reappears (Output.create).
             .removed => {
                 // The first surviving output takes our windows, so they don't go
                 // dark when another monitor still exists.
@@ -187,14 +209,7 @@ pub const Output = struct {
                 // Force the manage cycle to re-apply set_default to the fallback
                 // (the protocol leaves the default undefined once ours is gone).
                 if (ctx.layer_default == self) ctx.layer_default = null;
-                if (self.layer_output) |lo| lo.destroy();
-                if (self.wl_output) |wo| {
-                    gamma.detach(wo);
-                    wo.destroy();
-                }
-                if (self.name) |n| ctx.gpa.free(n);
-                self.rwm.destroy();
-                ctx.gpa.destroy(self);
+                self.destroy();
             },
         }
     }
@@ -216,21 +231,12 @@ pub fn configNmaster() i32 {
 /// wl_output listener — we only care about the connector name. Once it arrives
 /// (or changes) we re-sort `ctx.outputs` so monitor numbering follows config.
 fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
-    const ctx = Context.get();
     switch (event) {
         .name => |ev| {
-            if (self.name) |n| ctx.gpa.free(n);
-            self.name = ctx.gpa.dupeZ(u8, std.mem.span(ev.name)) catch null;
+            replaceStr(&self.name, ev.name);
             log.info("output connector: {s}", .{std.mem.span(ev.name)});
-            // NOTE: no transform is mirrored onto the Output. outputconfig.zig
-            // hands `config.monitors`' transform to the compositor, and river
-            // then reports `position`/`dimensions` — and takes our node
-            // positions — in the LOGICAL coordinate space that transform
-            // produces. So the WM never sees physical pixels and has nothing to
-            // compensate for. A `transform` field lived here for a while, set
-            // from the config and read by nothing, above a comment claiming the
-            // bar and layout needed it; it made rotation look handled where in
-            // fact there was nothing to handle.
+            // No transform here: river reports geometry and takes node positions
+            // in the logical space outputconfig's transform produces.
             reorder();
         },
         else => {}, // geometry/mode/scale/description/done — unused
@@ -258,7 +264,7 @@ fn rankLessThan(_: void, a: *Output, b: *Output) bool {
 /// arbitrary output-event order. Stable, so unconfigured outputs keep their
 /// relative arrival order. Pointers into the list (current_output, …) are
 /// unaffected; only the ordering changes.
-pub fn reorder() void {
+fn reorder() void {
     const ctx = Context.get();
     std.sort.insertion(*Output, ctx.outputs.items, {}, rankLessThan);
 }

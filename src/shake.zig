@@ -15,22 +15,13 @@
 // looks like a shake for a moment, a real shake keeps looking like one. So the
 // ratio tuning below stays fixed and permissive, and `delay` is the whole
 // user-facing surface.
-//
-// A shake used to grow the cursor from here. It no longer does anything itself:
-// it spawns `cursor.shake.command`. Growing was possible because a cursor size
-// is just a number handed to set_xcursor_theme — but the deltas above are the
-// ONLY pointer information reach has, and you cannot draw at a cursor whose
-// position you don't know. The base cursor theme/size is still applied from
-// this file (applyPending), which is why the pending_size plumbing stays. The
-// timer that once animated the size now only ticks the sustained-shake
-// accumulator.
 
 const std = @import("std");
 const linux = std.os.linux;
 const log = std.log.scoped(.shake);
 
 const config = @import("config.zig");
-const Context = @import("context.zig");
+const seat = @import("seat.zig");
 const action = @import("action.zig");
 
 // This Zig's std.posix has no open/ioctl, so the device handles go through libc
@@ -177,7 +168,6 @@ var acc_x: f64 = 0;
 var acc_y: f64 = 0;
 var last_sample_us: u64 = 0;
 
-var pending_size: ?u32 = null;
 var last_shake_us: u64 = 0; // last time the ratio test passed
 var shake_us: u64 = 0; // how long the shake has been sustained
 var fired: bool = false; // command already run for this shake
@@ -202,28 +192,23 @@ const Kind = enum { relative, absolute };
 fn pointerKind(fd: c_int) ?Kind {
     var evbits = [_]u8{0} ** 4;
     if (ioctl(fd, EVIOCGBIT(0, evbits.len), &evbits) < 0) return null;
-
-    if (evbits[EV_REL >> 3] & (@as(u8, 1) << @intCast(EV_REL & 7)) != 0) {
-        var relbits = [_]u8{0} ** 2;
-        if (ioctl(fd, EVIOCGBIT(EV_REL, relbits.len), &relbits) >= 0) {
-            const need: u8 = (1 << REL_X) | (1 << REL_Y);
-            if (relbits[0] & need == need) return .relative;
-        }
-    }
-
-    if (evbits[EV_ABS >> 3] & (@as(u8, 1) << @intCast(EV_ABS & 7)) != 0) {
-        var absbits = [_]u8{0} ** 8;
-        if (ioctl(fd, EVIOCGBIT(EV_ABS, absbits.len), &absbits) >= 0) {
-            const need: u8 = (1 << ABS_X) | (1 << ABS_Y);
-            if (absbits[0] & need == need) return .absolute;
-        }
-    }
-
+    if (hasXY(fd, &evbits, EV_REL, 2, REL_X, REL_Y)) return .relative;
+    if (hasXY(fd, &evbits, EV_ABS, 8, ABS_X, ABS_Y)) return .absolute;
     return null;
 }
 
+/// Whether the device supports event type `ev` with both axis codes `x` and `y`.
+/// `len` is the size of `ev`'s code bitmap to query.
+fn hasXY(fd: c_int, evbits: []const u8, ev: u16, comptime len: u32, comptime x: u16, comptime y: u16) bool {
+    if (evbits[ev >> 3] & (@as(u8, 1) << @intCast(ev & 7)) == 0) return false;
+    var bits = [_]u8{0} ** len;
+    if (ioctl(fd, EVIOCGBIT(ev, len), &bits) < 0) return false;
+    const need: u8 = (1 << x) | (1 << y);
+    return bits[0] & need == need;
+}
+
 pub fn start() void {
-    pending_size = config.cursor.size;
+    seat.cursor_dirty = true;
 
     if (!config.cursor.shake.enabled) return;
 
@@ -303,9 +288,9 @@ fn armTimer(on: bool) void {
     _ = linux.timerfd_settime(fd, .{}, &spec, null);
 }
 
-/// Drain one device. Returns true if river needs a manage cycle.
-pub fn onMotion(index: usize) bool {
-    if (index >= device_count) return false;
+/// Drain one device.
+pub fn onMotion(index: usize) void {
+    if (index >= device_count) return;
     const fd = device_fds[index];
     const dev = &devices[index];
 
@@ -358,9 +343,7 @@ pub fn onMotion(index: usize) bool {
         if (@as(usize, @intCast(n)) < buf.len) break;
     }
 
-    if (!moved) return false;
-    sampleMotion();
-    return false;
+    if (moved) sampleMotion();
 }
 
 fn sampleMotion() void {
@@ -395,7 +378,6 @@ fn push(s: Sample) void {
 }
 
 fn dropOldest() void {
-    if (count == 0) return;
     head = (head + 1) % MAX_SAMPLES;
     count -= 1;
     if (count > 0) path_sum -= samples[head].seg;
@@ -434,9 +416,8 @@ fn isShaking(now: u64) bool {
     return path_sum / diag >= THRESHOLD;
 }
 
-/// Drives the sustained-shake accumulator. Returns true if river needs a manage
-/// cycle — nothing here changes the cursor any more, so always false.
-pub fn onTimer() bool {
+/// Drives the sustained-shake accumulator.
+pub fn onTimer() void {
     var buf: [8]u8 = undefined;
     _ = std.c.read(timer_fd.?, &buf, buf.len);
 
@@ -477,16 +458,4 @@ pub fn onTimer() bool {
         armTimer(false);
         resetGesture();
     }
-
-    return false;
-}
-
-/// Called from the manage cycle. set_xcursor_theme isn't marked manage-only, but
-/// issuing it inside a sequence is valid either way.
-pub fn applyPending() void {
-    const size = pending_size orelse return;
-    const ctx = Context.get();
-    const seat = ctx.primary_seat orelse return; // no seat yet; retry next cycle
-    pending_size = null;
-    seat.rwm.setXcursorTheme(config.cursor.theme.ptr, size);
 }
