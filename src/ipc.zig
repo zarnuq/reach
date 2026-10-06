@@ -29,7 +29,6 @@
 
 const std = @import("std");
 const linux = std.os.linux;
-const binding = @import("binding.zig");
 const log = std.log.scoped(.ipc);
 
 const config = @import("config.zig");
@@ -202,11 +201,10 @@ fn compose() bool {
     // Brightness rides the same snapshot as everything else: it changes inside a
     // keybind, and river guarantees a manage cycle after one, so a panel learns
     // about a dim in the same beat it would learn about a focus change.
-    out.print("{{\"desktops\":{d},\"brightness\":{d},\"temperature\":{d},\"mod\":{},\"outputs\":[", .{
+    out.print("{{\"desktops\":{d},\"brightness\":{d},\"temperature\":{d},\"outputs\":[", .{
         config.desktops.count,
         gamma.brightness(),
         config.gamma.temperature,
-        binding.mod_held,
     });
     for (ctx.outputs.items, 0..) |o, i| {
         if (i != 0) out.raw(",");

@@ -113,11 +113,6 @@ var chords: std.ArrayList(*Chord) = .empty;
 /// Per-seat object used to request `ensure_next_key_eaten` and receive
 /// `ate_unbound_key`. We assume a single (primary) seat for chords.
 var bindings_seat: ?*river.XkbBindingsSeatV1 = null;
-
-/// Whether MOD is held, for the panel (it shows the bar only then). Fed by a
-/// v3 modifiers_watch; stays false on an older river.
-pub var mod_held: bool = false;
-var mod_watched = false;
 var active_chord: ?*Chord = null; // submap currently armed, if any
 var pending_enter: ?*Chord = null; // submap to arm in the next manage cycle
 var pending_exit: bool = false; // close the active submap in the next manage cycle
@@ -330,11 +325,6 @@ pub fn reregister() void {
 /// Enable any newly-created top-level bindings. Must be called from a manage
 /// sequence.
 pub fn enablePending() void {
-    // modifiers_watch is manage-only, like enable(); once is enough, it survives reloads.
-    if (!mod_watched) if (bindings_seat) |bs| {
-        if (bs.getVersion() >= 3) bs.modifiersWatch(MOD);
-        mod_watched = true;
-    };
     if (enable_from >= list.items.len) return;
     for (list.items[enable_from..]) |b| b.rwm.enable();
     enable_from = list.items.len;
@@ -417,7 +407,9 @@ pub fn applySubmap() void {
 fn seatListener(_: *river.XkbBindingsSeatV1, event: river.XkbBindingsSeatV1.Event, _: ?*anyopaque) void {
     switch (event) {
         .ate_unbound_key => pending_exit = true,
-        // A manage+render cycle follows, and render publishes the new state.
-        .modifiers_update => |m| mod_held = m.new.mod4,
+        // XKB bindings v3 can report watched modifier transitions. Reach does
+        // not install a watch yet; keep the event explicit for future chord
+        // cancellation rather than silently treating the v3 API as v2.
+        .modifiers_update => {},
     }
 }
