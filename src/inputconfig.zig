@@ -47,7 +47,8 @@ fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, 
                 log.warn("out of memory; device won't follow repeat changes on reload", .{});
         },
         // Compositor is done with us; the object is destroyed by the library.
-        .finished => {},
+        // Stop pushing repeat info to devices of a finished manager.
+        .finished => devices.clearRetainingCapacity(),
     }
 }
 
