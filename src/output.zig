@@ -95,7 +95,7 @@ pub const Output = struct {
 
     /// Wrap a new river output and track it. The first one becomes the selected
     /// monitor.
-    pub fn create(rwm: *river.OutputV1) !*Output {
+    pub fn create(rwm: *river.OutputV1) !void {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Output);
         self.* = .{ .rwm = rwm, .mfact = configMfact(), .nmaster = configNmaster() };
@@ -122,7 +122,6 @@ pub const Output = struct {
             if (w.output == null) w.output = self;
         }
         log.info("output created (total {d})", .{ctx.outputs.items.len});
-        return self;
     }
 
     /// Release the proxies and memory. The caller has already untracked it.
@@ -157,7 +156,7 @@ pub const Output = struct {
                 // anyway, since its own coordinates changed.
                 if (moved) self.usable_hint = null;
             },
-            // Resolution. The `mode` arg is ignored for now.
+            // Resolution.
             .dimensions => |ev| {
                 self.width = ev.width;
                 self.height = ev.height;
@@ -178,7 +177,6 @@ pub const Output = struct {
             // it and listen for its connector-name event so we can order monitors
             // by config.monitors (and so window rules' `monitor` index is stable).
             .wl_output => |ev| {
-                if (self.wl_output != null) return; // sent exactly once, but be safe
                 const wo = ctx.registry.bind(ev.name, wl.Output, 4) catch |err| {
                     log.warn("bind wl_output failed: {}", .{err});
                     return;

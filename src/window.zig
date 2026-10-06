@@ -38,12 +38,12 @@ pub const Window = struct {
     // known. `rules_done` guards against re-applying on later app_id/title events.
     rules_done: bool = false,
 
-    // Floating geometry as fractions of the output, set by a matching rule
-    // (w == 0 means "no rule geometry; use the default centered placement").
-    float_frac_x: f32 = 0,
-    float_frac_y: f32 = 0,
-    float_frac_w: f32 = 0,
-    float_frac_h: f32 = 0,
+    // Floating geometry from a matching rule, per axis: 0 = default/centered,
+    // ≤1 = fraction of the output, >1 = absolute pixels (see floatAxis).
+    rule_x: f32 = 0,
+    rule_y: f32 = 0,
+    rule_w: f32 = 0,
+    rule_h: f32 = 0,
 
     // The virtual desktop this window lives on (1-based; see config.desktops).
     // Set from the output's current desktop when the window appears. Visible
@@ -98,20 +98,19 @@ pub const Window = struct {
 
     /// Wrap a new river window, assign it to an output, make it the new master
     /// (head of the stack) and the focus.
-    pub fn create(rwm: *river.WindowV1) !*Window {
+    pub fn create(rwm: *river.WindowV1) !void {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Window);
-        errdefer ctx.gpa.destroy(self);
 
         // Each window owns one scene node; grab it once here. The window event
         // that brings us here fires inside a manage sequence, so this is fine.
-        const node = try rwm.getNode();
-        errdefer {
-            node.destroy();
+        const node = rwm.getNode() catch |err| {
             rwm.destroy();
-        }
-
+            ctx.gpa.destroy(self);
+            return err;
+        };
         self.* = .{ .rwm = rwm, .node = node };
+        errdefer self.destroy();
         rwm.setListener(*Window, listener, self);
 
         // Place the window on the selected monitor (dwl spawns on `selmon`), so
@@ -131,7 +130,16 @@ pub const Window = struct {
         // (keeps the desktop keys on the window you just opened).
         ctx.focus(self);
         log.info("window created (total {d})", .{ctx.windows.items.len});
-        return self;
+    }
+
+    /// Release the strings, proxies and memory. The caller has already untracked it.
+    fn destroy(self: *Window) void {
+        const gpa = Context.get().gpa;
+        if (self.title) |t| gpa.free(t);
+        if (self.app_id) |a| gpa.free(a);
+        self.node.destroy();
+        self.rwm.destroy();
+        gpa.destroy(self);
     }
 
     /// Whether this window should be shown right now: mapped, homed to an output,
@@ -202,7 +210,7 @@ pub const Window = struct {
     /// 0<v≤1 → fraction of `output_dim`, v>1 → absolute pixels.
     fn floatAxis(v: f32, output_dim: i32, fallback: i32) i32 {
         if (v == 0) return fallback;
-        if (v <= 1) return @intFromFloat(v * @as(f32, @floatFromInt(output_dim)));
+        if (v <= 1) return fracPx(v, output_dim);
         return @intFromFloat(v);
     }
 
@@ -213,7 +221,7 @@ pub const Window = struct {
 
     /// Compute a floating window's position+size on its output. Size first (so the
     /// centered fallback can use it), then position. A matching rule's geometry
-    /// (float_frac_*) overrides per-axis; an unset axis falls back to the window's
+    /// (rule_*) overrides per-axis; an unset axis falls back to the window's
     /// own size hint or a fraction-of-output default, centered (dwl centerfloating).
     ///
     /// Runs ONCE per float: after the first placement `float_placed` is set, and we
@@ -228,13 +236,13 @@ pub const Window = struct {
         // pixel size.
         const def_w = if (self.max_width > 0) self.max_width else fracPx(config.float_default_frac_w, out.width);
         const def_h = if (self.max_height > 0) self.max_height else fracPx(config.float_default_frac_h, out.height);
-        self.width = @max(1, @min(floatAxis(self.float_frac_w, out.width, def_w), out.width));
-        self.height = @max(1, @min(floatAxis(self.float_frac_h, out.height, def_h), out.height));
+        self.width = @max(1, @min(floatAxis(self.rule_w, out.width, def_w), out.width));
+        self.height = @max(1, @min(floatAxis(self.rule_h, out.height, def_h), out.height));
 
         const cx = @divFloor(out.width - self.width, 2);
         const cy = @divFloor(out.height - self.height, 2);
-        self.x = floatAxis(self.float_frac_x, out.width, cx);
-        self.y = floatAxis(self.float_frac_y, out.height, cy);
+        self.x = floatAxis(self.rule_x, out.width, cx);
+        self.y = floatAxis(self.rule_y, out.height, cy);
         self.mapped = true;
         self.float_placed = true;
     }
@@ -252,7 +260,7 @@ pub const Window = struct {
     /// known. ALL matching rules are applied in order (dwl accumulates): force
     /// floating, set the desktop, switch the output's view, reassign monitor, stash
     /// a floating geometry. No-op until at least app_id or title exists.
-    pub fn applyRules(self: *Window) void {
+    fn applyRules(self: *Window) void {
         if (self.rules_done) return;
         if (self.app_id == null and self.title == null) return;
         const ctx = Context.get();
@@ -280,19 +288,18 @@ pub const Window = struct {
                     if (self.output) |o| o.desktop = r.desktop;
                 }
             }
-            if (r.floating) {
-                self.floating = true;
-                self.rule_floating = true; // sticky: survive later recomputeFloating()
-            }
+            if (r.floating) self.rule_floating = true; // sticky: survive later recomputeFloating()
             // Stash any custom-float geometry (dwl customfloat). It applies
             // whenever the window ends up floating — by rule, transient, or
             // fixed-size. Per-axis, in placeFloating: 0 = default/centered,
             // ≤1 = fraction of the output, >1 = absolute pixels.
-            if (r.x != 0) self.float_frac_x = r.x;
-            if (r.y != 0) self.float_frac_y = r.y;
-            if (r.w != 0) self.float_frac_w = r.w;
-            if (r.h != 0) self.float_frac_h = r.h;
+            if (r.x != 0) self.rule_x = r.x;
+            if (r.y != 0) self.rule_y = r.y;
+            if (r.w != 0) self.rule_w = r.w;
+            if (r.h != 0) self.rule_h = r.h;
         }
+
+        if (self.rule_floating) self.recomputeFloating();
 
         // Only commit (and stop re-checking) once a rule actually matched, so a
         // window that gets its app_id before its title can still match a
@@ -369,20 +376,15 @@ pub const Window = struct {
 
             // The window is gone. Unlink, fix up focus, and release proxies.
             .closed => {
-                const closing_output = self.output;
                 if (std.mem.indexOfScalar(*Window, ctx.windows.items, self)) |i| _ = ctx.windows.orderedRemove(i);
                 if (ctx.focused == self) {
                     // The next visible window ON THIS OUTPUT, or nothing — never
                     // another monitor (same policy as `action.refocus`). No output
                     // (closed before river placed it) means nothing to stay on.
-                    ctx.focused = if (closing_output) |o| query.topVisibleOn(o) else null;
+                    ctx.focused = if (self.output) |o| query.topVisibleOn(o) else null;
                     ctx.rwm.manageDirty();
                 }
-                if (self.title) |t| ctx.gpa.free(t);
-                if (self.app_id) |a| ctx.gpa.free(a);
-                self.node.destroy();
-                self.rwm.destroy();
-                ctx.gpa.destroy(self);
+                self.destroy();
             },
 
             // The client asked to go fullscreen (e.g. a video player, browser F11).

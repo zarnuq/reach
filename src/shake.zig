@@ -115,7 +115,7 @@ const Sample = struct {
 
 /// Watched devices, in poll order. wm.zig's poll loop reads these two directly;
 /// `devices` holds the matching per-device motion state.
-pub var device_fds: [MAX_DEVICES]i32 = [_]i32{-1} ** MAX_DEVICES;
+pub var device_fds: [MAX_DEVICES]i32 = undefined;
 pub var device_count: usize = 0;
 var devices: [MAX_DEVICES]Device = undefined;
 
@@ -241,12 +241,12 @@ pub fn start() void {
 
 /// Close every watched device and the shake timer, so `start` can be re-run
 /// against a changed `config.cursor`. The event loop rebuilds its pollfd set from
-/// `device_fds`/`device_count` each iteration, so clearing them here is enough —
-/// but this must not run mid-poll, hence reload's manage-cycle deferral. Per-device
-/// state needs no reset: `start` initialises each slot as it opens it.
+/// `device_fds`/`device_count` each iteration, and dispatches Wayland (where a
+/// reload can call this) after reading the old slots, so clearing them here is
+/// enough. Per-device state needs no reset: `start` initialises each slot as it
+/// opens it.
 pub fn stop() void {
     for (device_fds[0..device_count]) |fd| _ = std.c.close(fd);
-    device_fds = [_]i32{-1} ** MAX_DEVICES;
     device_count = 0;
 
     if (timer_fd) |fd| {

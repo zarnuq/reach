@@ -227,8 +227,8 @@ fn wmListener(_: *river.WindowManagerV1, event: river.WindowManagerV1.Event, _: 
 
         // New objects. Each create() wires up and tracks its own wrapper, as
         // each object's own closed/removed handler untracks it.
-        .window => |ev| _ = Window.create(ev.id) catch |err| return log.err("failed to create window: {}", .{err}),
-        .output => |ev| _ = Output.create(ev.id) catch |err| return log.err("failed to create output: {}", .{err}),
-        .seat => |ev| _ = Seat.create(ev.id) catch |err| return log.err("failed to create seat: {}", .{err}),
+        .window => |ev| Window.create(ev.id) catch |err| return log.err("failed to create window: {}", .{err}),
+        .output => |ev| Output.create(ev.id) catch |err| return log.err("failed to create output: {}", .{err}),
+        .seat => |ev| Seat.create(ev.id) catch |err| return log.err("failed to create seat: {}", .{err}),
     }
 }

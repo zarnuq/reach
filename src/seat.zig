@@ -20,12 +20,11 @@ pub const Seat = struct {
     rwm: *river.SeatV1,
 
     /// Wrap a new river seat and track it. The first one becomes the primary.
-    pub fn create(rwm: *river.SeatV1) !*Seat {
+    pub fn create(rwm: *river.SeatV1) !void {
         const ctx = Context.get();
         const self = try ctx.gpa.create(Seat);
-        errdefer ctx.gpa.destroy(self);
         self.* = .{ .rwm = rwm };
-        errdefer rwm.destroy();
+        errdefer self.destroy();
         rwm.setListener(*Seat, listener, self);
 
         // Hook up the keybindings (desktops etc.) for this seat.
@@ -34,7 +33,12 @@ pub const Seat = struct {
         try ctx.seats.append(ctx.gpa, self);
         if (ctx.primary_seat == null) ctx.primary_seat = self;
         log.info("seat created (total {d})", .{ctx.seats.items.len});
-        return self;
+    }
+
+    /// Release the proxy and memory. The caller has already untracked it.
+    fn destroy(self: *Seat) void {
+        self.rwm.destroy();
+        Context.get().gpa.destroy(self);
     }
 
     fn listener(_: *river.SeatV1, event: river.SeatV1.Event, self: *Seat) void {
@@ -89,8 +93,7 @@ pub const Seat = struct {
                 if (ctx.primary_seat == self) {
                     ctx.primary_seat = if (ctx.seats.items.len > 0) ctx.seats.items[0] else null;
                 }
-                self.rwm.destroy();
-                ctx.gpa.destroy(self);
+                self.destroy();
             },
             else => {},
         }
