@@ -2,7 +2,7 @@
 //
 // Actions mutate state directly: river follows every `pressed` with a manage_start,
 // so layout/render re-run on their own. Only a config reload and a cursor warp
-// (ctx.warp_pending) are deferred to the manage cycle.
+// (warp_pending) are deferred to the manage cycle.
 
 const std = @import("std");
 
@@ -97,7 +97,7 @@ pub fn execute(action: Action) void {
         .killclient => if (ctx.focused) |f| f.rwm.close(),
         .zoom => {
             if (ctx.focused) |f| promoteToMaster(f);
-            ctx.warp_pending = true;
+            warp_pending = true;
         },
         .togglefloating => {
             if (ctx.focused) |f| {
@@ -119,19 +119,19 @@ pub fn execute(action: Action) void {
         // selection, so warp the pointer to follow (dwl warpcursor).
         .focusstack => |dir| {
             focusStack(dir);
-            ctx.warp_pending = true;
+            warp_pending = true;
         },
         .setmfact => |delta| {
             if (ctx.current_output) |out| out.mfact = output.clampMfact(out.mfact + delta);
-            ctx.warp_pending = true;
+            warp_pending = true;
         },
         .incnmaster => |delta| {
             if (ctx.current_output) |out| out.nmaster = output.clampNmaster(out.nmaster + delta);
-            ctx.warp_pending = true;
+            warp_pending = true;
         },
         .focusmon => |dir| {
             focusMonitor(dir);
-            ctx.warp_pending = true;
+            warp_pending = true;
         },
         // Moves the focused WINDOW to the adjacent monitor. Unlike focusmon, the
         // selection (and pointer) stay put — moving a window shouldn't yank the
@@ -285,13 +285,19 @@ fn sendToMonitor(dir: i32) void {
 // Cursor warp (dwl warpcursor)
 // ---------------------------------------------------------------------------
 
+/// Set by keyboard focus/layout actions to warp the pointer onto the newly focused
+/// window (dwl `warpcursor`) on the next manage cycle. Keeps the cursor with the
+/// keyboard focus, which also stops sloppy_focus from snapping focus back on the
+/// next stray pointer motion.
+var warp_pending = false;
+
 /// Warp the pointer to the center of the focused window (or the selected output
 /// if nothing is focused). MUST be called from a manage sequence — pointer_warp
 /// is a manage-only request — and AFTER arrange() so window geometry is current.
 pub fn applyWarp() void {
     const ctx = Context.get();
-    if (!ctx.warp_pending) return;
-    ctx.warp_pending = false;
+    if (!warp_pending) return;
+    warp_pending = false;
 
     const seat = ctx.primary_seat orelse return;
     var x: i32 = undefined;

@@ -18,7 +18,6 @@ const wp = wayland.client.wp;
 const Window = @import("window.zig").Window;
 const Output = @import("output.zig").Output;
 const Seat = @import("seat.zig").Seat;
-const BorderSurface = @import("border.zig").BorderSurface;
 
 /// The registry globals the window-manager core keeps using after startup (see
 /// main.zig's registryListener). `rwm` is the only hard requirement; the rest are
@@ -62,10 +61,6 @@ pub const Context = struct {
     outputs: std.ArrayList(*Output),
     seats: std.ArrayList(*Seat),
 
-    // Reusable pool of solid-color border surfaces (the tmux gutter highlights).
-    // Grown on demand; unused ones are hidden rather than destroyed.
-    borders: std.ArrayList(*BorderSurface),
-
     // The currently focused window, and the seat we drive focus through. reach
     // uses a single primary seat; per-seat focus is a possible future refinement.
     focused: ?*Window = null,
@@ -83,13 +78,6 @@ pub const Context = struct {
     // notifications, …) via river_layer_shell_output_v1.set_default. Tracked so the
     // manage cycle only re-issues set_default when the selection actually moves.
     layer_default: ?*Output = null,
-
-    // Set by keyboard focus/layout actions to warp the pointer onto the newly
-    // focused window (dwl `warpcursor`) on the next manage cycle — applied after
-    // arrange() so the geometry is current. Keeps the cursor with the keyboard
-    // focus, which also stops sloppy_focus from snapping focus back on the next
-    // stray pointer motion.
-    warp_pending: bool = false,
 
     running: bool = true,
 
@@ -124,7 +112,6 @@ pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, g: Globals) void {
         .windows = .empty,
         .outputs = .empty,
         .seats = .empty,
-        .borders = .empty,
     };
     inline for (std.meta.fields(Globals)) |f| @field(instance, f.name) = @field(g, f.name);
 }

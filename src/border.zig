@@ -107,6 +107,10 @@ pub const BorderSurface = struct {
     }
 };
 
+/// Reusable pool of border surfaces. Grown on demand; unused ones are hidden
+/// rather than destroyed.
+var pool: std.ArrayList(*BorderSurface) = .empty;
+
 /// A highlight rectangle in output-local coordinates.
 const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
 
@@ -129,7 +133,7 @@ pub fn update() void {
     }
 
     // Hide any pooled surfaces we didn't use this frame.
-    for (ctx.borders.items[used..]) |bs| bs.hide();
+    for (pool.items[used..]) |bs| bs.hide();
 }
 
 /// Raise this frame's border lines to the top of the scene, inactive pieces first
@@ -142,8 +146,7 @@ pub fn update() void {
 /// neighbouring tile; anchoring it only above a lower stack tile lets a higher
 /// tiled node occlude the separator completely.
 pub fn raise() void {
-    const ctx = Context.get();
-    for (ctx.borders.items) |bs| {
+    for (pool.items) |bs| {
         if (bs.visible) bs.node.placeTop();
     }
 }
@@ -388,17 +391,17 @@ fn generalLines(l: *Lines, f: *const Window, tiled: []const *Window, cidx: i32, 
 /// Get pooled border surface `i`, growing the pool if needed.
 fn ensure(i: usize) ?*BorderSurface {
     const ctx = Context.get();
-    while (ctx.borders.items.len <= i) {
+    while (pool.items.len <= i) {
         const bs = BorderSurface.create() catch |err| {
             log.err("create border surface failed: {}", .{err});
             return null;
         };
-        ctx.borders.append(ctx.gpa, bs) catch {
+        pool.append(ctx.gpa, bs) catch {
             bs.destroy();
             return null;
         };
     }
-    return ctx.borders.items[i];
+    return pool.items[i];
 }
 
 /// Split a 0xRRGGBB color into the 32-bit-per-channel, opaque, premultiplied
