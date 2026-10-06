@@ -110,7 +110,7 @@ pub var autostart: []const [:0]const u8 = &[_][:0]const u8{};
 // Monitor configuration (dwl `monrules`)
 // ---------------------------------------------------------------------------
 //
-// Applied once at startup via the wlr-output-management protocol (see
+// Applied at startup, on hotplug and on reload via wlr-output-management (see
 // outputconfig.zig) — river itself doesn't let the WM set modes through the
 // window-management protocol. Matched by output name; unmatched outputs are left
 // at their compositor defaults. Adaptive sync is intentionally NOT handled.
@@ -175,8 +175,7 @@ pub var mfact: f32 = 0.55;
 
 /// Default size for a floating window with no size preference of its own, as a
 /// fraction of its output (centered). Fixed-size dialogs keep their own size; this
-/// only applies when the window has no max-size hint. Replaces the old fixed
-/// 640x480, which felt cramped on large monitors.
+/// only applies when the window has no max-size hint.
 pub var float_default_frac_w: f32 = 0.6;
 pub var float_default_frac_h: f32 = 0.65;
 

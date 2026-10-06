@@ -64,7 +64,7 @@ const Target = union(enum) {
 };
 
 /// One live keybinding: the river object plus the target to run on press.
-pub const Binding = struct {
+const Binding = struct {
     rwm: *river.XkbBindingV1,
     target: Target,
     /// A chord's sub-key rather than a top-level bind. A terminal sub-key closes
@@ -167,10 +167,7 @@ test "every default bind names a real key" {
 /// advertise river_xkb_bindings_v1.
 pub fn registerForSeat(seat: *Seat) void {
     const ctx = Context.get();
-    const xkb = ctx.xkb_bindings orelse {
-        log.warn("no river_xkb_bindings_v1 — keybindings disabled", .{});
-        return;
-    };
+    const xkb = ctx.xkb_bindings orelse return;
 
     // Per-seat bindings object — drives the chord submaps (ensure_next_key_eaten /
     // ate_unbound_key). Created once, for the first seat that registers.

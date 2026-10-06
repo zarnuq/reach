@@ -251,10 +251,7 @@ pub fn stage(gpa: std.mem.Allocator) ?Staged {
     // A half-read generation is never committed: either both files parsed or the
     // caller keeps the config it already has.
     var complete = false;
-    defer if (!complete) {
-        ar.deinit();
-        gpa.destroy(ar);
-    };
+    defer if (!complete) release(gpa, ar);
 
     // Either file may be absent on its own. An absent config.zon leaves every
     // field null, which `overlay` reads as "the file didn't mention this" — i.e.

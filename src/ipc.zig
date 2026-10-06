@@ -201,8 +201,7 @@ fn compose() bool {
 
     // Brightness rides the same snapshot as everything else: it changes inside a
     // keybind, and river guarantees a manage cycle after one, so a panel learns
-    // about a dim in the same beat it would learn about a focus change. This is
-    // what replaced a panel tailing the gamma daemon's bus in a subprocess.
+    // about a dim in the same beat it would learn about a focus change.
     out.print("{{\"desktops\":{d},\"brightness\":{d},\"temperature\":{d},\"mod\":{},\"outputs\":[", .{
         config.desktops.count,
         gamma.brightness(),
@@ -251,7 +250,7 @@ fn compose() bool {
         log.warn("state snapshot exceeded {d} bytes; not published", .{scratch.len});
         return false;
     }
-    if (out.len == snapshot_len and std.mem.eql(u8, snapshot[0..snapshot_len], scratch[0..out.len])) {
+    if (std.mem.eql(u8, snapshot[0..snapshot_len], scratch[0..out.len])) {
         return false;
     }
     @memcpy(snapshot[0..out.len], scratch[0..out.len]);

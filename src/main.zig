@@ -98,9 +98,9 @@ pub fn main() !void {
         } else |_| {}
     }
 
-    // Export session environment variables (dwl setupenv). Done immediately
-    // after connecting so that every child process — autostart, keybinds,
-    // and runsvdir user services — inherits the correct Wayland/toolkit env.
+    // Export session environment variables (dwl setupenv). Done before anything
+    // is spawned so that every child process — autostart, keybinds, and runsvdir
+    // user services — inherits the correct Wayland/toolkit env.
     for (config.env) |kv| _ = setenv(kv[0].ptr, kv[1].ptr, 1);
 
     // 2. Discover globals. getRegistry() asks the server to advertise every
@@ -121,7 +121,7 @@ pub fn main() !void {
 
     // Warn (but continue) on the soft dependencies; reach degrades gracefully
     // without them (no borders, no keybindings, as noted per-global).
-    // A missing river_xkb_bindings_v1 is reported by binding.registerForSeat.
+    if (globals.core.xkb_bindings == null) log.warn("no river_xkb_bindings_v1 — keybindings disabled", .{});
     if (globals.core.layer_shell == null) log.warn("no river_layer_shell_v1 (panels cannot be given a default output)", .{});
     if (globals.core.wp_viewporter == null) log.warn("no wp_viewporter (borders disabled)", .{});
     if (globals.core.wp_single_pixel_buffer_manager == null) log.warn("no wp_single_pixel_buffer_v1 (borders disabled)", .{});
@@ -170,8 +170,9 @@ pub fn main() !void {
     }
 
     // Fire the startup programs (dwl-style autostart) now that we're connected;
-    // children inherit our WAYLAND_DISPLAY and so can connect to river.
-    action.runAutostart();
+    // each runs via `/bin/sh -c` and inherits our WAYLAND_DISPLAY, so it can
+    // connect to river.
+    for (config.autostart) |cmd| action.spawn(cmd);
 
     try wm.run(display);
     log.info("clean shutdown", .{});

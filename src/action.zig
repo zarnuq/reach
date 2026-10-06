@@ -79,7 +79,7 @@ pub fn execute(action: Action) void {
         },
         // Spawn a shell command (double-fork; see spawn()).
         .spawn => |cmd| spawn(cmd),
-        // Dim/undim every output. In-process: no subprocess, no bus round trip.
+        // Dim/undim every output.
         .brightness => |d| gamma.step(d),
         // Deferred; see reload.zig.
         .reload => reload.request(),
@@ -165,7 +165,6 @@ fn focusStack(dir: i32) void {
     const ctx = Context.get();
     const out = query.selectedOutput() orelse return;
     const cur = ctx.focused orelse return;
-    if (cur.output != out) return;
 
     ctx.focused = nextFocusable(ctx.windows.items, out, cur, dir) orelse return;
 }
@@ -312,13 +311,6 @@ pub fn applyWarp() void {
 // ---------------------------------------------------------------------------
 // Spawning
 // ---------------------------------------------------------------------------
-
-/// Run the configured startup commands (dwl's `autostart[]`). Each goes through
-/// `/bin/sh -c`. Spawned children inherit our environment, including the
-/// WAYLAND_DISPLAY river set for us, so GUI clients connect to the session.
-pub fn runAutostart() void {
-    for (config.autostart) |cmd| spawn(cmd);
-}
 
 /// Double-fork + setsid a `/bin/sh -c <cmd>`, reaping the first child so no
 /// zombie is left and the grandchild is reparented to init.
