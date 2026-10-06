@@ -11,6 +11,8 @@
 // Protocol flow:
 //   manager.input_device -> a device appeared; apply repeat info immediately
 //   device.removed       -> device unplugged; destroy our proxy
+//
+// Live devices are tracked so a config reload can push new repeat info to them.
 
 const std = @import("std");
 const log = std.log.scoped(.inputcfg);
@@ -19,10 +21,18 @@ const wayland = @import("wayland");
 const river = wayland.client.river;
 
 const config = @import("config.zig");
+const Context = @import("context.zig");
+
+var devices: std.ArrayList(*river.InputDeviceV1) = .empty;
 
 /// Start listening on the manager. Called from main once the global binds.
 pub fn init(mgr: *river.InputManagerV1) void {
     mgr.setListener(?*anyopaque, managerListener, null);
+}
+
+/// Push the current repeat config to every live device. Called on reload.
+pub fn reapply() void {
+    for (devices.items) |dev| dev.setRepeatInfo(config.repeat_rate, config.repeat_delay);
 }
 
 fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, _: ?*anyopaque) void {
@@ -33,6 +43,8 @@ fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, 
             // plugged keyboards pick up the config too.
             ev.id.setRepeatInfo(config.repeat_rate, config.repeat_delay);
             ev.id.setListener(?*anyopaque, deviceListener, null);
+            devices.append(Context.get().gpa, ev.id) catch
+                log.warn("out of memory; device won't follow repeat changes on reload", .{});
         },
         // Compositor is done with us; the object is destroyed by the library.
         .finished => {},
@@ -42,7 +54,11 @@ fn managerListener(_: *river.InputManagerV1, event: river.InputManagerV1.Event, 
 fn deviceListener(dev: *river.InputDeviceV1, event: river.InputDeviceV1.Event, _: ?*anyopaque) void {
     switch (event) {
         // Device unplugged → release the proxy. (We don't act on type/name.)
-        .removed => dev.destroy(),
+        .removed => {
+            if (std.mem.indexOfScalar(*river.InputDeviceV1, devices.items, dev)) |i|
+                _ = devices.swapRemove(i);
+            dev.destroy();
+        },
         else => {},
     }
 }

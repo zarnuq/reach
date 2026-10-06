@@ -36,6 +36,7 @@ const Context = @import("context.zig");
 const binding = @import("binding.zig");
 const gamma = @import("gamma.zig");
 const outputconfig = @import("outputconfig.zig");
+const inputconfig = @import("inputconfig.zig");
 const output = @import("output.zig");
 const shake = @import("shake.zig");
 const seat = @import("seat.zig");
@@ -71,6 +72,8 @@ pub fn apply() void {
     const old_temperature = config.gamma.temperature;
     const old_mfact = config.mfact;
     const old_nmaster = config.nmaster;
+    const old_repeat_rate = config.repeat_rate;
+    const old_repeat_delay = config.repeat_delay;
 
     // Tear the bindings down while their `spawn` strings are still valid memory,
     // then swap the config in.
@@ -95,6 +98,10 @@ pub fn apply() void {
 
     // Monitors: cheap to skip, and re-applying a mode set is a visible flicker.
     if (monitors_changed) outputconfig.reapply();
+
+    // Repeat info is only sent when a device appears, so existing keyboards keep
+    // the old rate/delay unless it is pushed to them here.
+    if (config.repeat_rate != old_repeat_rate or config.repeat_delay != old_repeat_delay) inputconfig.reapply();
 
     // Temperature is config-only, so a reload is the ONLY way it moves — this is
     // the night-light switch. Brightness is left alone on purpose: it is runtime
