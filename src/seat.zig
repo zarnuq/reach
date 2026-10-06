@@ -98,7 +98,7 @@ pub const Seat = struct {
 };
 
 /// The cursor theme/size still has to be pushed to the primary seat. Set by
-/// shake.start() — at startup, and again when a reload changes the cursor config.
+/// main at startup, and by reload when the cursor config changes.
 pub var cursor_dirty: bool = false;
 
 /// Called from the manage cycle. set_xcursor_theme isn't marked manage-only, but

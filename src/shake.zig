@@ -21,7 +21,6 @@ const linux = std.os.linux;
 const log = std.log.scoped(.shake);
 
 const config = @import("config.zig");
-const seat = @import("seat.zig");
 const action = @import("action.zig");
 
 // This Zig's std.posix has no open/ioctl, so the device handles go through libc
@@ -208,8 +207,6 @@ fn hasXY(fd: c_int, evbits: []const u8, ev: u16, comptime len: u32, comptime x: 
 }
 
 pub fn start() void {
-    seat.cursor_dirty = true;
-
     if (!config.cursor.shake.enabled) return;
 
     // Probing by number avoids a directory walk (no opendir in this std.posix).

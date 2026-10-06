@@ -38,6 +38,7 @@ const gamma = @import("gamma.zig");
 const outputconfig = @import("outputconfig.zig");
 const output = @import("output.zig");
 const shake = @import("shake.zig");
+const seat = @import("seat.zig");
 
 /// A reload has been asked for and will be applied by the next manage cycle.
 var pending: bool = false;
@@ -88,6 +89,7 @@ pub fn apply() void {
     // Cursor/shake: re-open pointer devices only if something it depends on moved.
     if (cursor_changed) {
         shake.stop();
+        seat.cursor_dirty = true;
         shake.start();
     }
 

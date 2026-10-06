@@ -248,10 +248,7 @@ fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
 /// is unknown or absent from the config.
 fn configRank(o: *const Output) usize {
     const name = o.name orelse return std.math.maxInt(usize);
-    for (config.monitors, 0..) |m, i| {
-        if (std.mem.eql(u8, m.name, name)) return i;
-    }
-    return std.math.maxInt(usize);
+    return config.monitorIndex(name) orelse std.math.maxInt(usize);
 }
 
 fn rankLessThan(_: void, a: *Output, b: *Output) bool {

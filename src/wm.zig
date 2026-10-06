@@ -38,11 +38,6 @@ pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, globals: Context.Glo
     log.info("window manager initialised; waiting for river events", .{});
 }
 
-pub fn deinit() void {
-    // Process exit reclaims everything; explicit teardown of tracked objects can
-    // come later if we ever need a graceful in-process restart.
-}
-
 /// The event loop: poll() over the Wayland fd plus the SIGHUP signalfd,
 /// shake-to-find's pointer devices and animation tick, and the state socket's
 /// listener plus its connected clients (all optional; added to the set only when

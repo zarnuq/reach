@@ -37,6 +37,7 @@ const action = @import("action.zig");
 const signals = @import("signals.zig");
 const ipc = @import("ipc.zig");
 const shake = @import("shake.zig");
+const seat = @import("seat.zig");
 const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
 const gamma = @import("gamma.zig");
@@ -131,7 +132,6 @@ pub fn main() !void {
     //    copy takes it non-optional.
     globals.core.rwm = rwm;
     wm.init(gpa, registry, globals.core);
-    defer wm.deinit();
 
     // SIGHUP → config reload, delivered on the poll loop.
     signals.start();
@@ -142,6 +142,7 @@ pub fn main() !void {
     defer ipc.stop();
 
     // Cursor theme/size, and shake-to-find's pointer devices if enabled.
+    seat.cursor_dirty = true;
     shake.start();
 
     // Output configuration (config.monitors). Applied asynchronously once the
@@ -238,4 +239,5 @@ test {
     _ = @import("binding.zig");
     _ = @import("confparse.zig");
     _ = @import("gamma.zig");
+    _ = @import("reload.zig");
 }
