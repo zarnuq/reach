@@ -359,7 +359,7 @@ pub const Window = struct {
             // rules (once) now that identity is known, and ask for a fresh cycle
             // so any float/desktop/monitor change takes effect.
             .app_id => |ev| {
-                replaceStr(&self.app_id, ev.app_id);
+                Context.replaceStr(&self.app_id, ev.app_id);
                 if (ev.app_id) |id| log.info("app_id: {s}", .{id});
                 self.applyRules();
             },
@@ -368,7 +368,7 @@ pub const Window = struct {
             // river for a fresh cycle so it gets published (a title change alone
             // wouldn't otherwise trigger one).
             .title => |ev| {
-                replaceStr(&self.title, ev.title);
+                Context.replaceStr(&self.title, ev.title);
                 // A title-based rule may only become matchable now.
                 self.applyRules();
                 ctx.rwm.manageDirty();
@@ -411,10 +411,3 @@ pub const Window = struct {
         }
     }
 };
-
-/// Replace an owned string with a dup of `s` (null clears it; so does OOM).
-pub fn replaceStr(slot: *?[:0]u8, s: ?[*:0]const u8) void {
-    const gpa = Context.get().gpa;
-    if (slot.*) |old| gpa.free(old);
-    slot.* = if (s) |p| gpa.dupeZ(u8, std.mem.span(p)) catch null else null;
-}

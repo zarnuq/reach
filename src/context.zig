@@ -109,6 +109,12 @@ pub fn get() *Context {
     return &instance;
 }
 
+/// Replace a gpa-owned string with a dup of `s` (null clears it; so does OOM).
+pub fn replaceStr(slot: *?[:0]u8, s: ?[*:0]const u8) void {
+    if (slot.*) |old| instance.gpa.free(old);
+    slot.* = if (s) |p| instance.gpa.dupeZ(u8, std.mem.span(p)) catch null else null;
+}
+
 /// Initialise the global. Called once from wm.init with the bound globals.
 pub fn init(gpa: std.mem.Allocator, registry: *wl.Registry, g: Globals) void {
     instance = .{

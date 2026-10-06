@@ -15,7 +15,6 @@ const river = wayland.client.river;
 const Context = @import("context.zig");
 const config = @import("config.zig");
 const gamma = @import("gamma.zig");
-const replaceStr = @import("window.zig").replaceStr;
 
 /// An output-local rectangle.
 pub const Rect = struct { x: i32 = 0, y: i32 = 0, width: i32 = 0, height: i32 = 0 };
@@ -229,7 +228,7 @@ pub fn clampNmaster(v: i32) i32 {
 fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
     switch (event) {
         .name => |ev| {
-            replaceStr(&self.name, ev.name);
+            Context.replaceStr(&self.name, ev.name);
             log.info("output connector: {s}", .{std.mem.span(ev.name)});
             // No transform here: river reports geometry and takes node positions
             // in the logical space outputconfig's transform produces.

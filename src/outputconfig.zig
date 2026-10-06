@@ -89,12 +89,8 @@ fn addHead(rwm: *zwlr.OutputHeadV1) void {
 }
 
 fn headListener(_: *zwlr.OutputHeadV1, event: zwlr.OutputHeadV1.Event, self: *Head) void {
-    const ctx = Context.get();
     switch (event) {
-        .name => |ev| {
-            if (self.name) |n| ctx.gpa.free(n);
-            self.name = ctx.gpa.dupeZ(u8, std.mem.span(ev.name)) catch null;
-        },
+        .name => |ev| Context.replaceStr(&self.name, ev.name),
         .mode => |ev| addMode(self, ev.mode),
         // Head unplugged → inert. Free it and any modes still attached. (We bound
         // v1, so there's no `release` request; destroying the proxies is all.)
