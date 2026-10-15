@@ -326,6 +326,11 @@ pub const Window = struct {
         if (!self.fullscreen) {
             const out = self.output.?;
             self.node.setPosition(out.x + self.x, out.y + self.y);
+            // Clip to the window's own output. A client can commit more than we
+            // proposed (or lag behind a move to a smaller monitor) and river would
+            // draw the excess onto the neighbouring output. The box is the output,
+            // not the tile, so spilling over a neighbour tile stays visible.
+            if (self.rwm.getVersion() >= 2) self.rwm.setClipBox(-self.x, -self.y, out.width, out.height);
         }
         self.rwm.show();
     }
