@@ -95,7 +95,7 @@ pub const cursor = struct {
 // `env`. Never set WAYLAND_DISPLAY here — river exports the correct socket name to
 // reach, and hardcoding it breaks children if river chose a name other than
 // wayland-0.
-pub var env: []const [2][:0]const u8 = &[_][2][:0]const u8{
+pub var env: []const [2][:0]const u8 = &.{
     .{ "XDG_CURRENT_DESKTOP", "river" },
     .{ "XDG_SESSION_TYPE", "wayland" },
 };
@@ -104,7 +104,7 @@ pub var env: []const [2][:0]const u8 = &[_][2][:0]const u8{
 /// `/bin/sh -c`, so `$HOME`, pipes, and `&` all work. Empty by default — set your
 /// session bringup (services, notification daemon, wallpaper, …) in config.zon's
 /// `autostart`, conventionally a single `$HOME/.config/reach/autostart.sh`.
-pub var autostart: []const [:0]const u8 = &[_][:0]const u8{};
+pub var autostart: []const [:0]const u8 = &.{};
 
 // ---------------------------------------------------------------------------
 // Monitor configuration (dwl `monrules`)
@@ -156,8 +156,8 @@ pub const Monitor = struct {
 /// `monitors` block; where both exist monitors.zon wins, since it is the file a
 /// GUI edits. Either way they are matched by connector name. NOTE: array ORDER defines
 /// monitor numbering / focusmon (Super+,/.) navigation — reach sorts live outputs
-/// into that order (output.zig reorder).
-pub var monitors: []const Monitor = &[_]Monitor{};
+/// into that order (output.zig rankLessThan).
+pub var monitors: []const Monitor = &.{};
 
 /// Index of the `monitors` entry named `name`, or null.
 pub fn monitorIndex(name: []const u8) ?usize {
@@ -218,7 +218,7 @@ pub const Rule = struct {
 
 /// Empty by default. Define your own in config.zon's `rules` (app_id/title based;
 /// `desktop` is a 1-based desktop number).
-pub var rules: []const Rule = &[_]Rule{};
+pub var rules: []const Rule = &.{};
 
 /// tmux border highlight color, 0xRRGGBB (alpha is forced opaque). Each face the
 /// focused window shares with a neighbour carries one line, laid just outside that

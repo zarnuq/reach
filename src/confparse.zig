@@ -440,8 +440,7 @@ fn locate(buf: []u8, comptime rel: []const u8, comptime system: []const u8) ?[:0
     if (c.getenv("HOME")) |h| {
         if (candidate(buf, &.{ std.mem.span(h), "/.config" ++ rel })) |p| return p;
     }
-    if (candidate(buf, &.{system})) |p| return p;
-    return null;
+    return candidate(buf, &.{system});
 }
 
 /// Join `parts` into `buf` (null-terminated) and return it if that file exists.

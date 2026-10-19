@@ -80,8 +80,14 @@ pub const BorderSurface = struct {
         const ctx = Context.get();
 
         // A fresh 1x1 buffer of the color (cheap; released after commit).
-        const c = components(color);
-        const buffer = ctx.wp_single_pixel_buffer_manager.?.createU32RgbaBuffer(c.r, c.g, c.b, c.a) catch |err| {
+        // 32-bit-per-channel, opaque, premultiplied components, as
+        // wp_single_pixel_buffer expects (8-bit c → 32-bit by byte-repeat).
+        const buffer = ctx.wp_single_pixel_buffer_manager.?.createU32RgbaBuffer(
+            chan(@truncate(color >> 16)),
+            chan(@truncate(color >> 8)),
+            chan(@truncate(color)),
+            0xffff_ffff,
+        ) catch |err| {
             log.err("create color buffer failed: {}", .{err});
             return;
         };
@@ -307,7 +313,7 @@ fn focusedLines() ?Lines {
         const ay0 = if (cidx == 1) mid else f.y;
         const ay1 = if (cidx == 1) f.y + f.height else mid;
         l.vline(x, t, f.y, f.y + f.height, ay0, ay1);
-    } else if (nmaster != 1 and total == 2) {
+    } else if (total == 2) {
         // Two panes stacked — both in the master column (nmaster >= 2) or both in
         // the stack (nmaster == 0). One divider across them on the focused pane's
         // facing edge, cut in half — LEFT or RIGHT half active depending on which
@@ -402,17 +408,6 @@ fn ensure(i: usize) ?*BorderSurface {
         };
     }
     return pool.items[i];
-}
-
-/// Split a 0xRRGGBB color into the 32-bit-per-channel, opaque, premultiplied
-/// components wp_single_pixel_buffer expects. (8-bit c → 32-bit by byte-repeat.)
-fn components(color: u32) struct { r: u32, g: u32, b: u32, a: u32 } {
-    return .{
-        .r = chan(@truncate((color >> 16) & 0xff)),
-        .g = chan(@truncate((color >> 8) & 0xff)),
-        .b = chan(@truncate(color & 0xff)),
-        .a = 0xffff_ffff,
-    };
 }
 
 fn chan(c: u8) u32 {

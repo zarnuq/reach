@@ -96,8 +96,12 @@ pub fn execute(action: Action) void {
         },
         .killclient => if (ctx.focused) |f| f.rwm.close(),
         .zoom => {
-            if (ctx.focused) |f| promoteToMaster(f);
             warp_pending = true;
+            // Move the focused window to the head of the stack (master), shifting the windows above it
+            // down one place. In place, so it cannot fail.
+            const f = ctx.focused orelse return;
+            const i = std.mem.indexOfScalar(*Window, ctx.windows.items, f) orelse return;
+            std.mem.rotate(*Window, ctx.windows.items[0 .. i + 1], i);
         },
         .togglefloating => {
             if (ctx.focused) |f| {
@@ -118,8 +122,10 @@ pub fn execute(action: Action) void {
         // Focus/layout — all reposition the focused window and/or move the
         // selection, so warp the pointer to follow (dwl warpcursor).
         .focusstack => |dir| {
-            focusStack(dir);
             warp_pending = true;
+            const out = ctx.current_output orelse return;
+            const cur = ctx.focused orelse return;
+            ctx.focused = nextFocusable(ctx.windows.items, out, cur, dir) orelse return;
         },
         .setmfact => |delta| {
             if (ctx.current_output) |out| out.mfact = output.clampMfact(out.mfact + delta);
@@ -129,14 +135,32 @@ pub fn execute(action: Action) void {
             if (ctx.current_output) |out| out.nmaster = output.clampNmaster(out.nmaster + delta);
             warp_pending = true;
         },
+        // Move the selection to the adjacent monitor and pull keyboard focus there.
+        // Works even when the target monitor is empty (selection still moves, focus
+        // clears) so you can switch to a bare monitor and spawn onto it.
         .focusmon => |dir| {
-            focusMonitor(dir);
             warp_pending = true;
+            const cur = ctx.current_output orelse return;
+            const next = adjacentOutput(cur, dir) orelse return;
+            ctx.current_output = next;
+            ctx.focused = query.topVisibleOn(next);
         },
         // Moves the focused WINDOW to the adjacent monitor. Unlike focusmon, the
         // selection (and pointer) stay put — moving a window shouldn't yank the
         // cursor — so no warp here.
-        .sendmon => |dir| sendToMonitor(dir),
+        // Send the focused window to the adjacent monitor, keeping it on the SAME
+        // desktop number it was already on rather than moving it to the destination's
+        // viewed desktop. So a window on desktop 3 stays on desktop 3 over there — it
+        // only shows immediately if that monitor is already viewing desktop 3, otherwise
+        // it waits there. The selection stays put; focus falls to whatever's left on the
+        // current monitor.
+        .sendmon => |dir| {
+            const cur = ctx.current_output orelse return;
+            const next = adjacentOutput(cur, dir) orelse return;
+            const w = ctx.focused orelse return;
+            w.output = next;
+            refocus(cur);
+        },
     }
 }
 
@@ -152,22 +176,6 @@ fn refocus(out: *Output) void {
         if (f.output == out and f.visible()) return; // still valid
     }
     ctx.focused = query.topVisibleOn(out);
-}
-
-/// Move `w` to the head of the stack (master), shifting the windows above it
-/// down one place. In place, so it cannot fail.
-fn promoteToMaster(w: *Window) void {
-    const ctx = Context.get();
-    const i = std.mem.indexOfScalar(*Window, ctx.windows.items, w) orelse return;
-    std.mem.rotate(*Window, ctx.windows.items[0 .. i + 1], i);
-}
-
-fn focusStack(dir: i32) void {
-    const ctx = Context.get();
-    const out = ctx.current_output orelse return;
-    const cur = ctx.focused orelse return;
-
-    ctx.focused = nextFocusable(ctx.windows.items, out, cur, dir) orelse return;
 }
 
 /// Find the next visible window on `out` in stack order. Tiled and floating
@@ -251,34 +259,6 @@ fn adjacentOutput(out: *Output, dir: i32) ?*Output {
     const i = std.mem.indexOfScalar(*Output, ctx.outputs.items, out) orelse return null;
     const next = if (dir > 0) (i + 1) % n else (i + n - 1) % n;
     return ctx.outputs.items[next];
-}
-
-/// Move the selection to the adjacent monitor and pull keyboard focus there.
-/// Works even when the target monitor is empty (selection still moves, focus
-/// clears) so you can switch to a bare monitor and spawn onto it.
-fn focusMonitor(dir: i32) void {
-    const ctx = Context.get();
-    const cur = ctx.current_output orelse return;
-    const next_out = adjacentOutput(cur, dir) orelse return;
-
-    ctx.current_output = next_out;
-    ctx.focused = query.topVisibleOn(next_out);
-}
-
-/// Send the focused window to the adjacent monitor, keeping it on the SAME
-/// desktop number it was already on rather than moving it to the destination's
-/// viewed desktop. So a window on desktop 3 stays on desktop 3 over there — it
-/// only shows immediately if that monitor is already viewing desktop 3, otherwise
-/// it waits there. The selection stays put; focus falls to whatever's left on the
-/// current monitor.
-fn sendToMonitor(dir: i32) void {
-    const ctx = Context.get();
-    const cur = ctx.current_output orelse return;
-    const next_out = adjacentOutput(cur, dir) orelse return;
-    const w = ctx.focused orelse return;
-
-    w.output = next_out;
-    refocus(cur);
 }
 
 // ---------------------------------------------------------------------------

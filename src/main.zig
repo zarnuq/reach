@@ -237,6 +237,7 @@ fn capped(g: anytype, comptime T: type) u32 {
 // compilation. Add a line here when a new file grows tests.
 test {
     _ = @import("action.zig");
+    _ = @import("ipc.zig");
     _ = @import("binding.zig");
     _ = @import("config.zig");
     _ = @import("confparse.zig");

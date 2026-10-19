@@ -232,7 +232,13 @@ fn wlOutputListener(_: *wl.Output, event: wl.Output.Event, self: *Output) void {
             log.info("output connector: {s}", .{std.mem.span(ev.name)});
             // No transform here: river reports geometry and takes node positions
             // in the logical space outputconfig's transform produces.
-            reorder();
+            // Order `ctx.outputs` by `config.monitors` so that monitor numbering — which
+            // drives focusmon/sendmon navigation (MOD+,/.) and the window-rule `monitor`
+            // index — is deterministic and user-controlled, instead of following river's
+            // arbitrary output-event order. Stable, so unconfigured outputs keep their
+            // relative arrival order. Pointers into the list (current_output, …) are
+            // unaffected; only the ordering changes.
+            std.sort.insertion(*Output, Context.get().outputs.items, {}, rankLessThan);
         },
         else => {}, // geometry/mode/scale/description/done — unused
     }
@@ -248,17 +254,6 @@ fn configRank(o: *const Output) usize {
 
 fn rankLessThan(_: void, a: *Output, b: *Output) bool {
     return configRank(a) < configRank(b);
-}
-
-/// Order `ctx.outputs` by `config.monitors` so that monitor numbering — which
-/// drives focusmon/sendmon navigation (MOD+,/.) and the window-rule `monitor`
-/// index — is deterministic and user-controlled, instead of following river's
-/// arbitrary output-event order. Stable, so unconfigured outputs keep their
-/// relative arrival order. Pointers into the list (current_output, …) are
-/// unaffected; only the ordering changes.
-fn reorder() void {
-    const ctx = Context.get();
-    std.sort.insertion(*Output, ctx.outputs.items, {}, rankLessThan);
 }
 
 /// river_layer_shell_output_v1 listener — the exclusive-zone hint.

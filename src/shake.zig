@@ -393,8 +393,7 @@ fn isShaking(now: u64) bool {
     var max_x = min_x;
     var min_y = samples[head].y;
     var max_y = min_y;
-    var i: usize = 1;
-    while (i < count) : (i += 1) {
+    for (1..count) |i| {
         const s = samples[(head + i) % MAX_SAMPLES];
         min_x = @min(min_x, s.x);
         max_x = @max(max_x, s.x);

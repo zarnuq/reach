@@ -117,12 +117,11 @@ pub const Window = struct {
         // apps launched by a keybind appear where the keyboard focus is — not on
         // whatever output happens to be first (DP-1). Null only while there are no
         // outputs; Output.create re-homes the window when one appears.
-        const out = ctx.current_output;
-        self.output = out;
+        self.output = ctx.current_output;
 
         // New windows land on the desktop the output is currently viewing
         // (dwl behavior), so they appear on the active workspace.
-        if (out) |o| self.desktop = o.desktop;
+        if (self.output) |o| self.desktop = o.desktop;
 
         // Insert at the head so a new window becomes master (dwm-like).
         try ctx.windows.insert(ctx.gpa, 0, self);
@@ -261,8 +260,7 @@ pub const Window = struct {
     /// floating, set the desktop, switch the output's view, reassign monitor, stash
     /// a floating geometry. No-op until at least app_id or title exists.
     fn applyRules(self: *Window) void {
-        if (self.rules_done) return;
-        if (self.app_id == null and self.title == null) return;
+        if (self.rules_done or (self.app_id == null and self.title == null)) return;
         const ctx = Context.get();
 
         var matched = false;

@@ -30,7 +30,6 @@ const Mode = struct {
     width: i32 = 0,
     height: i32 = 0,
     refresh: i32 = 0, // mHz
-    preferred: bool = false,
 };
 
 const Head = struct {
@@ -132,7 +131,7 @@ fn modeListener(_: *zwlr.OutputModeV1, event: zwlr.OutputModeV1.Event, self: *Mo
             self.height = ev.height;
         },
         .refresh => |ev| self.refresh = ev.refresh,
-        .preferred => self.preferred = true,
+        .preferred => {},
         // Mode withdrawn (alone, or before its head finishes) → drop it so
         // pickMode can't hand a dead mode to set_mode.
         .finished => {
@@ -163,7 +162,8 @@ fn buildAndApply(serial: u32) void {
     for (heads.items) |h| {
         // Enable every present head; only matched ones get explicit settings.
         const ch = conf.enableHead(h.rwm) catch continue;
-        const mon = matchMonitor(h.name) orelse continue;
+        const i = config.monitorIndex(h.name orelse continue) orelse continue;
+        const mon = &config.monitors[i];
 
         if (mon.w > 0 and mon.h > 0) {
             if (pickMode(h, mon)) |m| {
@@ -187,28 +187,20 @@ fn buildAndApply(serial: u32) void {
 }
 
 fn configListener(conf: *zwlr.OutputConfigurationV1, event: zwlr.OutputConfigurationV1.Event, _: ?*anyopaque) void {
+    defer conf.destroy();
     switch (event) {
         .succeeded => {
             log.info("monitor configuration applied", .{});
-            conf.destroy();
         },
         .failed => {
             // Bad config (e.g. an unsupported mode). Don't retry — that would spin.
             log.err("monitor configuration rejected by compositor", .{});
-            conf.destroy();
         },
         .cancelled => {
             // Output state changed under us (serial stale). Retry on the next done.
             need_apply = true;
-            conf.destroy();
         },
     }
-}
-
-/// The config.monitors entry whose name equals `name`, or null.
-fn matchMonitor(name: ?[:0]const u8) ?*const config.Monitor {
-    const i = config.monitorIndex(name orelse return null) orelse return null;
-    return &config.monitors[i];
 }
 
 /// Best mode on `h` matching the requested resolution: exact refresh if asked for,

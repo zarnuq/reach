@@ -6,7 +6,6 @@
 // of a manage sequence.
 
 const std = @import("std");
-const posix = std.posix;
 const linux = std.os.linux;
 const log = std.log.scoped(.signals);
 
@@ -33,7 +32,7 @@ pub fn onSignal() bool {
     var hup = false;
     while (true) {
         var info: linux.signalfd_siginfo = undefined;
-        const n = posix.read(f, std.mem.asBytes(&info)) catch break;
+        const n = std.posix.read(f, std.mem.asBytes(&info)) catch break;
         if (n != @sizeOf(linux.signalfd_siginfo)) break;
         if (info.signo == @intFromEnum(linux.SIG.HUP)) hup = true;
     }

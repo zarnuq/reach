@@ -151,8 +151,7 @@ pub fn onClient(i: usize) void {
 /// Send the current state to every client, if it differs from what they have.
 /// Called once per render cycle.
 pub fn publish() void {
-    if (client_count == 0) return;
-    if (!compose()) return;
+    if (client_count == 0 or !compose()) return;
 
     // Descending, so dropping a client (which shifts the tail down) can't skip
     // the next one or read past the new count.
@@ -209,7 +208,7 @@ fn compose() bool {
     for (ctx.outputs.items, 0..) |o, i| {
         if (i != 0) out.raw(",");
         out.raw("{\"name\":");
-        out.string(if (o.name) |n| n else "");
+        out.string(o.name orelse "");
         out.print(",\"desktop\":{d},\"focused\":{},\"fullscreen\":{},\"occupied\":[", .{
             o.desktop,
             selected == o,
@@ -248,9 +247,7 @@ fn compose() bool {
         log.warn("state snapshot exceeded {d} bytes; not published", .{scratch.len});
         return false;
     }
-    if (std.mem.eql(u8, snapshot[0..snapshot_len], scratch[0..out.len])) {
-        return false;
-    }
+    if (std.mem.eql(u8, snapshot[0..snapshot_len], scratch[0..out.len])) return false;
     @memcpy(snapshot[0..out.len], scratch[0..out.len]);
     snapshot_len = out.len;
     return true;
@@ -265,13 +262,7 @@ const Writer = struct {
     ok: bool = true,
 
     fn raw(self: *Writer, bytes: []const u8) void {
-        if (!self.ok) return;
-        if (self.len + bytes.len > self.buf.len) {
-            self.ok = false;
-            return;
-        }
-        @memcpy(self.buf[self.len..][0..bytes.len], bytes);
-        self.len += bytes.len;
+        self.print("{s}", .{bytes});
     }
 
     fn print(self: *Writer, comptime fmt: []const u8, args: anytype) void {
@@ -312,4 +303,26 @@ fn truncate(s: []const u8) usize {
     var n: usize = max_string;
     while (n > 0 and s[n] & 0xc0 == 0x80) n -= 1;
     return n;
+}
+
+test "state strings keep JSON escapes, UTF-8 boundaries and overflow detection" {
+    var buf: [1024]u8 = undefined;
+    var out = Writer{ .buf = &buf };
+    out.string("\"\\\n\r\t\x08");
+    try std.testing.expect(out.ok);
+    try std.testing.expectEqualStrings("\"\\\"\\\\\\n\\r\\t\\u0008\"", buf[0..out.len]);
+
+    const title = "a" ** (max_string - 1) ++ "é";
+    out.len = 0;
+    out.string(title);
+    try std.testing.expectEqualStrings("\"" ++ "a" ** (max_string - 1) ++ "\"", buf[0..out.len]);
+
+    out = .{ .buf = buf[0..3] };
+    out.raw("abc");
+    try std.testing.expect(out.ok);
+    try std.testing.expectEqual(@as(usize, 3), out.len);
+    out.raw("d");
+    out.print("{d}", .{42});
+    try std.testing.expect(!out.ok);
+    try std.testing.expectEqual(@as(usize, 3), out.len);
 }
