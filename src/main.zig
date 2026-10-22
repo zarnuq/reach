@@ -41,6 +41,7 @@ const seat = @import("seat.zig");
 const outputconfig = @import("outputconfig.zig");
 const inputconfig = @import("inputconfig.zig");
 const gamma = @import("gamma.zig");
+const backlight = @import("backlight.zig");
 
 // Oldest protocol versions compatible with the requests reach makes today.
 // Newer servers are capped to the generated version in registryListener.
@@ -161,6 +162,10 @@ pub fn main() !void {
     } else {
         log.warn("no zwlr_gamma_control_manager_v1 — brightness/temperature disabled", .{});
     }
+
+    // Detect a panel backlight once. If present, the brightness keys drive it
+    // instead of gamma (see action.zig / backlight.zig).
+    backlight.init();
 
     // Input configuration (keyboard repeat). Applied as devices are announced.
     if (globals.input_manager) |im| {

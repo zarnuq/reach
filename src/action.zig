@@ -8,6 +8,7 @@ const std = @import("std");
 
 const config = @import("config.zig");
 const gamma = @import("gamma.zig");
+const backlight = @import("backlight.zig");
 const reload = @import("reload.zig");
 const Context = @import("context.zig");
 const output = @import("output.zig");
@@ -80,8 +81,9 @@ pub fn execute(action: Action) void {
         },
         // Spawn a shell command (double-fork; see spawn()).
         .spawn => |cmd| spawn(cmd),
-        // Dim/undim every output.
-        .brightness => |d| gamma.step(d),
+        // Brightness keys: the real panel backlight on a laptop (actual power
+        // saving), gamma dimming on a desktop that has no backlight device.
+        .brightness => |d| if (backlight.available()) backlight.step(d) else gamma.step(d),
         // Deferred; see reload.zig.
         .reload => reload.request(),
         // Window management

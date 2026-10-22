@@ -34,6 +34,7 @@ const log = std.log.scoped(.ipc);
 const config = @import("config.zig");
 const Context = @import("context.zig");
 const gamma = @import("gamma.zig");
+const backlight = @import("backlight.zig");
 const query = @import("query.zig");
 
 // Sockets go through libc (std.c): Zig 0.16's std.posix no longer wraps the
@@ -202,7 +203,9 @@ fn compose() bool {
     // about a dim in the same beat it would learn about a focus change.
     out.print("{{\"desktops\":{d},\"brightness\":{d},\"temperature\":{d},\"outputs\":[", .{
         config.desktops.count,
-        gamma.brightness(),
+        // Report whichever source the brightness keys drive (backlight on a
+        // laptop, gamma on a desktop), so the panel's OSD/readout tracks it.
+        if (backlight.available()) backlight.brightness() else gamma.brightness(),
         config.gamma.temperature,
     });
     for (ctx.outputs.items, 0..) |o, i| {
