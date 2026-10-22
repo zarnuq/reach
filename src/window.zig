@@ -391,10 +391,22 @@ pub const Window = struct {
             },
 
             // The client asked to go fullscreen (e.g. a video player, browser F11).
-            // Honor it; the manage cycle applies the actual river request. river
-            // gives an output hint, but we just fullscreen on the window's output.
-            .fullscreen_requested => {
+            // Honor it; the manage cycle applies the actual river request.
+            .fullscreen_requested => |ev| {
                 self.fullscreen = true;
+                // Honor the output hint when the client gives one. Without this a
+                // window asking to be fullscreen on a SPECIFIC output (wl-mirror
+                // --fullscreen-output, a video sent to the external screen) lands
+                // on its current output instead — and a screen mirror then captures
+                // the very output it is drawn on, giving an infinite hall-of-mirrors.
+                if (ev.output) |ro| {
+                    for (ctx.outputs.items) |o| {
+                        if (o.rwm == ro) {
+                            self.output = o;
+                            break;
+                        }
+                    }
+                }
                 // A window can request fullscreen before arrange() ever maps it
                 // (e.g. a Proton game that launches straight into fullscreen).
                 // arrange() skips fullscreen windows, so it's the only mapper that
