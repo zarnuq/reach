@@ -236,10 +236,11 @@ fn bottomEdge(w: *const Window) i32 {
 }
 
 /// Where the general-case divider sits beside `w`: past its drawn right edge in
-/// the master column, or `th` before the master column's `reach` (or its own left
-/// edge, whichever is further right) in the stack.
-fn dividerX(w: *const Window, master: bool, reach: i32, th: i32) i32 {
-    return if (master) rightEdge(w) else @max(w.x, reach) - th;
+/// the master column, or at the master column's `reach` in the stack. Both are
+/// the same x — the line sits on the stack side of the seam whichever column has
+/// focus, so switching focus never moves it.
+fn dividerX(w: *const Window, master: bool, reach: i32) i32 {
+    return if (master) rightEdge(w) else reach;
 }
 
 /// Compute the focused window's seam lines. `cidx` (the focused window's index
@@ -308,7 +309,9 @@ fn focusedLines() ?Lines {
         // happens to fill that area, and it is layout.arrange, not this file, that
         // decides whether it does.
         const other = tiled.items[@intCast(1 - cidx)];
-        const x = if (cidx == 1) @max(f.x, rightEdge(other)) - t else rightEdge(f);
+        // Always past the master's right edge, so the line stays put when focus
+        // crosses the seam.
+        const x = rightEdge(if (cidx == 1) other else f);
         const mid = f.y + @divFloor(f.height, 2);
         const ay0 = if (cidx == 1) mid else f.y;
         const ay1 = if (cidx == 1) f.y + f.height else mid;
@@ -365,11 +368,11 @@ fn generalLines(l: *Lines, f: *const Window, tiled: []const *Window, cidx: i32, 
         for (tiled[0..@intCast(nmaster)]) |w| master_reach = @max(master_reach, rightEdge(w));
 
         // Per window, since each one's seam can sit at its own drawn edge.
-        l.active.add(.{ .x = dividerX(f, in_master, master_reach, t), .y = f.y, .w = t, .h = f.height });
+        l.active.add(.{ .x = dividerX(f, in_master, master_reach), .y = f.y, .w = t, .h = f.height });
         for (tiled, 0..) |w, idx| {
             if (w == f) continue;
             if ((idx < nmaster) != in_master) continue; // focused window's column only
-            l.inactive.add(.{ .x = dividerX(w, in_master, master_reach, t), .y = w.y, .w = t, .h = w.height });
+            l.inactive.add(.{ .x = dividerX(w, in_master, master_reach), .y = w.y, .w = t, .h = w.height });
         }
     }
     // Horizontal seams span exactly the focused window's own column, so the
@@ -378,7 +381,7 @@ fn generalLines(l: *Lines, f: *const Window, tiled: []const *Window, cidx: i32, 
     // without the overshoot they miss each other by exactly one t x t square and
     // the L reads as broken. There is no cut to make — the seam is active end to
     // end — so these go in as plain rectangles rather than through `hline`.
-    const hx0 = if (has_divider and !in_master) dividerX(f, false, master_reach, t) else f.x;
+    const hx0 = if (has_divider and !in_master) dividerX(f, false, master_reach) else f.x;
     const hx1 = if (has_divider and in_master) rightEdge(f) + t else f.x + f.width;
 
     // Seam ABOVE, only when the focused window has a neighbour above it in its
