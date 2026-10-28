@@ -2,9 +2,11 @@
 //
 // The look (per the user's spec): ONLY the focused window is decorated, and only
 // on the faces it actually shares with a neighbour across a gap — never the edges
-// facing the screen, never anything on the neighbour itself. Every other seam on
-// the output stays bare. A floating window shares no seam, so it is the one
-// exception: it gets a full box instead.
+// facing the screen, never anything on the neighbour itself. A floating window
+// shares no seam, so it is the one exception: it gets a full box instead. Every
+// OTHER gap between tiled windows is filled flat in `border_inactive` underneath
+// (`gutters`), so with an inner gap the wallpaper never shows through a seam the
+// focused window doesn't touch.
 //
 // A shared face carries ONE line, tmux-style, sitting just OUTSIDE the FOCUSED
 // window's own edge — flush against it, never over it, so no pixel of the window
@@ -38,6 +40,7 @@ const config = @import("config.zig");
 const Context = @import("context.zig");
 const query = @import("query.zig");
 const Window = @import("window.zig").Window;
+const Output = @import("output.zig").Output;
 
 /// One reusable solid-color rectangle in the scene.
 pub const BorderSurface = struct {
@@ -117,6 +120,11 @@ pub const BorderSurface = struct {
 /// rather than destroyed.
 var pool: std.ArrayList(*BorderSurface) = .empty;
 
+/// A second pool, for the gutter fill (see `gutters`). Separate because it is
+/// stacked at a different layer: just above the tiled windows, always, where the
+/// focused window's own lines go above the floats when a float has focus.
+var gutter_pool: std.ArrayList(*BorderSurface) = .empty;
+
 /// A highlight rectangle in output-local coordinates.
 const Rect = struct { x: i32, y: i32, w: i32, h: i32 };
 
@@ -134,12 +142,71 @@ pub fn update() void {
     // Only the focused window is decorated. Its inactive twins go down first so
     // the active line wins if a narrow gutter makes the two overlap.
     if (focusedLines()) |l| {
-        used = draw(l.inactive.items(), l.out_x, l.out_y, config.border_inactive, used);
-        used = draw(l.active.items(), l.out_x, l.out_y, config.border_active, used);
+        used = draw(&pool, l.inactive.items(), l.out_x, l.out_y, config.border_inactive, used);
+        used = draw(&pool, l.active.items(), l.out_x, l.out_y, config.border_active, used);
     }
 
     // Hide any pooled surfaces we didn't use this frame.
     for (pool.items[used..]) |bs| bs.hide();
+
+    // Every other gutter, on every output, in the inactive colour.
+    var filled: usize = 0;
+    for (ctx.outputs.items) |out| {
+        var g: Rects(32) = .{};
+        gutters(out, &g);
+        filled = draw(&gutter_pool, g.items(), out.x, out.y, config.border_inactive, filled);
+    }
+    for (gutter_pool.items[filled..]) |bs| bs.hide();
+}
+
+/// The gaps between tiled windows on `out`, in output-local coordinates: the
+/// divider between the columns, full height, and each gap between two windows in
+/// one column, full column width. The focused window's lines only cover the
+/// seams it touches, so without this every other gap showed the wallpaper.
+///
+/// Never thicker than `inner_gap`: a fill is laid INSIDE the gap, and with a gap
+/// narrower than `border_thickness` it would otherwise reach over a window. So
+/// `inner_gap = 0` draws nothing here, as before. A gap wider than
+/// `border_thickness` is filled only that far, leaving the rest as the gap the
+/// config asked for. Nothing on an output showing a fullscreen window, since
+/// these are stacked above every tiled node.
+fn gutters(out: *Output, g: *Rects(32)) void {
+    const t = @min(config.border_thickness, config.inner_gap);
+    if (t <= 0 or query.fullscreenOn(out)) return;
+    const ctx = Context.get();
+    var tiled: std.ArrayList(*Window) = .empty;
+    defer tiled.deinit(ctx.gpa);
+    query.collectTiled(ctx.gpa, out, &tiled) catch return; // OOM: skip this frame
+    const ws = tiled.items;
+    if (ws.len < 2) return;
+    const total: i32 = @intCast(ws.len);
+    const nmaster = @min(total, out.nmaster);
+
+    if (nmaster > 0 and total > nmaster) {
+        var reach: i32 = 0;
+        for (ws[0..@intCast(nmaster)]) |w| reach = @max(reach, rightEdge(w));
+        var top: i32 = std.math.maxInt(i32);
+        var bottom: i32 = std.math.minInt(i32);
+        for (ws) |w| {
+            top = @min(top, w.y);
+            bottom = @max(bottom, bottomEdge(w));
+        }
+        g.add(.{ .x = reach, .y = top, .w = t, .h = bottom - top });
+    }
+    for (ws[0 .. ws.len - 1], 0..) |w, idx| {
+        const i: i32 = @intCast(idx);
+        if ((i < nmaster) != (i + 1 < nmaster)) continue; // the next one is in the other column
+        g.add(.{ .x = w.x, .y = bottomEdge(w), .w = w.width, .h = t });
+    }
+}
+
+/// Raise the gutter fill above the tiled windows. stack.apply() calls this right
+/// after the tiled layer and before `raise`, so floats and the focused window's
+/// own lines both stay on top of it.
+pub fn raiseGutters() void {
+    for (gutter_pool.items) |bs| {
+        if (bs.visible) bs.node.placeTop();
+    }
 }
 
 /// Raise this frame's border lines to the top of the scene, inactive pieces first
@@ -157,12 +224,12 @@ pub fn raise() void {
     }
 }
 
-/// Draw `rects` (output-local) in `color`, continuing the frame's surface
-/// allocation at `used` and returning the new count.
-fn draw(rects: []const Rect, out_x: i32, out_y: i32, color: u32, used: usize) usize {
+/// Draw `rects` (output-local) in `color` with surfaces from `from`, continuing
+/// the frame's allocation at `used` and returning the new count.
+fn draw(from: *std.ArrayList(*BorderSurface), rects: []const Rect, out_x: i32, out_y: i32, color: u32, used: usize) usize {
     var n = used;
     for (rects) |r| {
-        const bs = ensure(n) orelse return n;
+        const bs = ensure(from, n) orelse return n;
         n += 1;
         bs.show(out_x + r.x, out_y + r.y, r.w, r.h, color);
     }
@@ -397,20 +464,20 @@ fn generalLines(l: *Lines, f: *const Window, tiled: []const *Window, cidx: i32, 
     }
 }
 
-/// Get pooled border surface `i`, growing the pool if needed.
-fn ensure(i: usize) ?*BorderSurface {
+/// Get surface `i` of `from`, growing that pool if needed.
+fn ensure(from: *std.ArrayList(*BorderSurface), i: usize) ?*BorderSurface {
     const ctx = Context.get();
-    while (pool.items.len <= i) {
+    while (from.items.len <= i) {
         const bs = BorderSurface.create() catch |err| {
             log.err("create border surface failed: {}", .{err});
             return null;
         };
-        pool.append(ctx.gpa, bs) catch {
+        from.append(ctx.gpa, bs) catch {
             bs.destroy();
             return null;
         };
     }
-    return pool.items[i];
+    return from.items[i];
 }
 
 fn chan(c: u8) u32 {

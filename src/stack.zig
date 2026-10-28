@@ -44,6 +44,10 @@ pub fn apply() void {
     // dirtiness would cost more than it saves.
     raiseEach(.tiled);
 
+    // The gutter fill sits right on the tiled layer, under floats and under the
+    // focused window's own lines.
+    border.raiseGutters();
+
     // A tiled border must clear every tiled node. This matters when inner_gap is
     // zero: the outside-facing separator occupies pixels inside its neighbour.
     if (focused_layer == .tiled) border.raise();
