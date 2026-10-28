@@ -169,6 +169,21 @@ unlike `config.example.zon` it is deliberately **not** installed to `/etc`: a
 system-wide layout would be picked up by every user without one of their own and
 would move their screens.
 
+### Colours: `colors.zon`
+
+The border colours can also live in their own file beside `config.zon`, found by
+the same lookup, for a theme switcher to generate without touching `config.zon`
+(ZON has no include):
+
+```zig
+.{ .border_active = 0xcba6f7, .border_inactive = 0x45475a }
+```
+
+It wins over `config.zon`'s `border_*` fields and takes effect on the next reload
+(`kill -HUP`). Those two keys are all it accepts. Unlike `monitors.zon`, a broken
+`colors.zon` is **skipped** with a warning: the worst it can cost is the colours
+`config.zon` names, where failing the load at startup would cost every keybind.
+
 ### Live reload
 
 The config is re-read on demand — no restart, no lost windows:

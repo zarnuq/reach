@@ -57,11 +57,23 @@
 // A `.monitors` block in config.zon still parses and still applies — monitors.zon
 // simply wins where both exist.
 //
+// COLORS: `colors.zon` is the same idea for the border colours — the one part of
+// the config a theme switcher generates, so it can rewrite them without touching
+// config.zon (which it could not include from: ZON has no include). It wins over
+// config.zon's `border_*` fields:
+//
+//   .{ .border_active = 0xcba6f7, .border_inactive = 0x45475a }
+//
+// Unlike monitors.zon, a colors.zon that is present but broken is SKIPPED with a
+// warning rather than failing the stage: the worst a bad one can cost is the
+// colours config.zon names, and failing the stage at startup would cost every
+// keybind instead.
+//
 // LOOKUP ORDER (first that exists wins, dwl/river-style XDG with a system default
 // for packaging), applied to each file independently:
-//   $XDG_CONFIG_HOME/reach/{config,monitors}.zon
-//   $HOME/.config/reach/{config,monitors}.zon
-//   /etc/reach/{config,monitors}.zon          (shipped by the ebuild)
+//   $XDG_CONFIG_HOME/reach/{config,monitors,colors}.zon
+//   $HOME/.config/reach/{config,monitors,colors}.zon
+//   /etc/reach/{config,monitors,colors}.zon   (the ebuild ships only config.zon)
 
 const std = @import("std");
 const log = std.log.scoped(.config);
@@ -131,6 +143,13 @@ pub const MonitorFile = struct {
     monitors: []const config.Monitor = &.{},
 };
 
+/// The top-level colors.zon document. Field names mirror config.zig's, so
+/// `overlay` applies it like any other spec.
+pub const ColorFile = struct {
+    border_active: ?u32 = null,
+    border_inactive: ?u32 = null,
+};
+
 /// The top-level config.zon document.
 pub const FileConfig = struct {
     outer_gap: ?i32 = null,
@@ -169,6 +188,18 @@ test "the shipped example config parses" {
         std.debug.print("config.example.zon: {}\n{f}\n", .{ err, diag });
         return err;
     };
+}
+
+test "colors.zon parses and only sets the border colours" {
+    var ar: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer ar.deinit();
+    var diag: std.zon.parse.Diagnostics = .{};
+    const cf = try parseZon(ColorFile, ar.allocator(), ".{ .border_active = 0x123456, .border_inactive = 0xabcdef }", &diag);
+    try std.testing.expectEqual(@as(?u32, 0x123456), cf.border_active);
+    try std.testing.expectEqual(@as(?u32, 0xabcdef), cf.border_inactive);
+    // Anything else is an unknown key — the file is colours only.
+    var diag2: std.zon.parse.Diagnostics = .{};
+    try std.testing.expectError(error.ParseZon, parseZon(ColorFile, ar.allocator(), ".{ .mfact = 0.5 }", &diag2));
 }
 
 test "the shipped example monitors file parses" {
@@ -213,6 +244,8 @@ pub const Staged = struct {
     /// Null when there is no monitors.zon — not when it failed to parse, which
     /// fails the whole stage instead (see `stage`).
     mf: ?MonitorFile,
+    /// Null when there is no colors.zon OR it failed to parse (see `stage`).
+    cf: ?ColorFile,
     arena: *std.heap.ArenaAllocator,
 };
 
@@ -233,9 +266,11 @@ pub fn load(gpa: std.mem.Allocator) void {
 pub fn stage(gpa: std.mem.Allocator) ?Staged {
     var cfg_buf: [std.fs.max_path_bytes]u8 = undefined;
     var mon_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var col_buf: [std.fs.max_path_bytes]u8 = undefined;
     const cfg_path = locate(&cfg_buf, "/reach/config.zon", "/etc/reach/config.zon");
     const mon_path = locate(&mon_buf, "/reach/monitors.zon", "/etc/reach/monitors.zon");
-    if (cfg_path == null and mon_path == null) {
+    const col_path = locate(&col_buf, "/reach/colors.zon", "/etc/reach/colors.zon");
+    if (cfg_path == null and mon_path == null and col_path == null) {
         // At startup this means "run on the compiled-in defaults". On a reload it
         // means the files went away, and we keep what is already loaded rather
         // than yanking the session back to defaults over a missing file.
@@ -266,8 +301,15 @@ pub fn stage(gpa: std.mem.Allocator) ?Staged {
     var mf: ?MonitorFile = null;
     if (mon_path) |path| mf = parseFile(MonitorFile, aa, path) orelse return null;
 
+    // A broken colors.zon is skipped, not fatal: see COLORS at the top.
+    var cf: ?ColorFile = null;
+    if (col_path) |path| {
+        cf = parseFile(ColorFile, aa, path);
+        if (cf == null) log.warn("ignoring {s}: border colours come from config.zon", .{path});
+    }
+
     complete = true;
-    return .{ .fc = fc, .mf = mf, .arena = ar };
+    return .{ .fc = fc, .mf = mf, .cf = cf, .arena = ar };
 }
 
 /// Read and ZON-parse one file into `aa`. Null (having logged) on any problem, so
@@ -318,6 +360,8 @@ pub fn commit(staged: Staged) ?*std.heap.ArenaAllocator {
     binds = null;
     overlay(config, defaults.?);
     overlay(config, staged.fc);
+    // colors.zon after config.zon, so the generated colours win.
+    if (staged.cf) |cf| overlay(config, cf);
     // monitors.zon LAST, so the dedicated file wins over a `.monitors` block left
     // behind in config.zon rather than racing it.
     //
